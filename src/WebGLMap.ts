@@ -4,12 +4,14 @@ import { fragmentShaderSource, vertexShaderSource } from './shaders';
 export interface WebGLMapOptions {
   containerId: string;
   center?: [number, number];
+  zoom?: number;
 }
 
 export class WebGLMap {
   private containerId: string;
   private container?: HTMLDivElement;
   private center: [number, number];
+  private zoom: number;
   private canvas!: HTMLCanvasElement;
   private program!: WebGLProgram;
   private gl!: WebGL2RenderingContext;
@@ -19,6 +21,7 @@ export class WebGLMap {
   constructor(options: WebGLMapOptions) {
     this.containerId = options.containerId;
     this.center = options.center ?? [0, 0];
+    this.zoom = options.zoom ?? 1;
 
     this.initCanvas();
     this.initGL();
@@ -34,13 +37,14 @@ export class WebGLMap {
     this.gl.clear(this.gl.COLOR_BUFFER_BIT);
 
     const [cx, cy] = this.center;
+    const z = this.zoom;
     const positions = new Float32Array([
-      0 - cx,
-      0.5 - cy,
-      -0.5 - cx,
-      0 - cy,
-      0.5 - cx,
-      0 - cy,
+      (0 - cx) * z,
+      (0.5 - cy) * z,
+      (-0.5 - cx) * z,
+      (0 - cy) * z,
+      (0.5 - cx) * z,
+      (0 - cy) * z,
     ]);
     this.drawTriangle(positions);
   }
@@ -49,14 +53,40 @@ export class WebGLMap {
     this.bindMouseDownEvent();
     this.bindMouseUpEvent();
     this.bindMouseMoveEvent();
+    this.bindMouseWheelEvent();
+  }
+
+  bindMouseWheelEvent() {
+    this.canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+
+      const rect = this.canvas.getBoundingClientRect();
+
+      const canvasX = e.clientX - rect.left;
+      const canvasY = e.clientY - rect.top;
+
+      const clipX = (canvasX / rect.width) * 2 - 1;
+      const clipY = -((canvasY / rect.height) * 2 - 1);
+
+      const worldX = this.center[0] + clipX / this.zoom;
+      const worldY = this.center[1] + clipY / this.zoom;
+
+      const factor = e.deltaY < 0 ? 1.1 : 0.9;
+      this.zoom *= factor;
+
+      this.center[0] = worldX - clipX / this.zoom;
+      this.center[1] = worldY - clipY / this.zoom;
+
+      this.render();
+    });
   }
 
   bindMouseMoveEvent() {
     window.addEventListener('mousemove', (e) => {
       if (!this.isDragging) return;
 
-      this.center[0] -= e.movementX * (2 / this.canvas.width);
-      this.center[1] += e.movementY * (2 / this.canvas.height);
+      this.center[0] -= (e.movementX * (2 / this.canvas.width)) / this.zoom;
+      this.center[1] += (e.movementY * (2 / this.canvas.height)) / this.zoom;
 
       this.render();
     });
