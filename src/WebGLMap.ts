@@ -3,22 +3,27 @@ import { fragmentShaderSource, vertexShaderSource } from './shaders';
 
 export interface WebGLMapOptions {
   containerId: string;
+  center?: [number, number];
 }
 
 export class WebGLMap {
   private containerId: string;
   private container?: HTMLDivElement;
+  private center: [number, number];
   private canvas!: HTMLCanvasElement;
   private program!: WebGLProgram;
   private gl!: WebGL2RenderingContext;
   private positionAttribLocation!: number;
+  private isDragging: boolean = false;
 
   constructor(options: WebGLMapOptions) {
     this.containerId = options.containerId;
+    this.center = options.center ?? [0, 0];
 
     this.initCanvas();
     this.initGL();
     this.initProgram();
+    this.bindEvents();
 
     this.render();
   }
@@ -28,9 +33,47 @@ export class WebGLMap {
     this.gl.clearColor(0.7, 0.7, 0.7, 1.0);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT);
 
-    // Draw a simple triangle
-    const positions = new Float32Array([0, 0.5, -0.5, 0, 0.5, 0]);
+    const [cx, cy] = this.center;
+    const positions = new Float32Array([
+      0 - cx,
+      0.5 - cy,
+      -0.5 - cx,
+      0 - cy,
+      0.5 - cx,
+      0 - cy,
+    ]);
     this.drawTriangle(positions);
+  }
+
+  bindEvents() {
+    this.bindMouseDownEvent();
+    this.bindMouseUpEvent();
+    this.bindMouseMoveEvent();
+  }
+
+  bindMouseMoveEvent() {
+    window.addEventListener('mousemove', (e) => {
+      if (!this.isDragging) return;
+
+      this.center[0] -= e.movementX * (2 / this.canvas.width);
+      this.center[1] += e.movementY * (2 / this.canvas.height);
+
+      this.render();
+    });
+  }
+
+  bindMouseDownEvent() {
+    this.canvas.addEventListener('mousedown', () => {
+      this.isDragging = true;
+      this.canvas.style.cursor = 'grabbing';
+    });
+  }
+
+  bindMouseUpEvent() {
+    window.addEventListener('mouseup', () => {
+      this.isDragging = false;
+      this.canvas.style.cursor = 'grab';
+    });
   }
 
   drawTriangle(positions: Float32Array) {
