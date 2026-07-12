@@ -1,4 +1,5 @@
 import { compileShader, createProgram } from './gl-utils';
+import { multiply, scale, translation, type Mat3 } from './mat3';
 import { fragmentShaderSource, vertexShaderSource } from './shaders';
 
 export interface WebGLMapOptions {
@@ -16,6 +17,7 @@ export class WebGLMap {
   private program!: WebGLProgram;
   private gl!: WebGL2RenderingContext;
   private positionAttribLocation!: number;
+  private matrixUniformLocation!: WebGLUniformLocation;
   private isDragging: boolean = false;
 
   constructor(options: WebGLMapOptions) {
@@ -35,18 +37,23 @@ export class WebGLMap {
     this.gl.useProgram(this.program);
     this.gl.clearColor(0.7, 0.7, 0.7, 1.0);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+    this.gl.uniformMatrix3fv(
+      this.matrixUniformLocation,
+      false,
+      this.getMatrix(),
+    );
 
-    const [cx, cy] = this.center;
-    const z = this.zoom;
-    const positions = new Float32Array([
-      (0 - cx) * z,
-      (0.5 - cy) * z,
-      (-0.5 - cx) * z,
-      (0 - cy) * z,
-      (0.5 - cx) * z,
-      (0 - cy) * z,
-    ]);
+    const positions = new Float32Array([0, 0.5, -0.5, 0, 0.5, 0]);
     this.drawTriangle(positions);
+  }
+
+  getMatrix() {
+    const z = this.zoom;
+    const [cx, cy] = this.center;
+    const translationMatrix: Mat3 = translation(-cx, -cy);
+    const scaleMatrix: Mat3 = scale(z, z);
+    const matrix = multiply(scaleMatrix, translationMatrix);
+    return matrix;
   }
 
   bindEvents() {
@@ -144,14 +151,27 @@ export class WebGLMap {
 
     this.program = createProgram(this.gl, vertexShader, fragmentShader);
 
-    this.positionAttribLocation = this.gl.getAttribLocation(
+    const positionAttribLocation = this.gl.getAttribLocation(
       this.program,
       'a_position',
     );
-    if (this.positionAttribLocation === -1)
+    if (positionAttribLocation === -1)
       throw new Error(
         `WebGLMap: failed to find attribute location for "a_position"`,
       );
+
+    this.positionAttribLocation = positionAttribLocation;
+
+    const matrixUniformLocation = this.gl.getUniformLocation(
+      this.program,
+      'u_matrix',
+    );
+    if (matrixUniformLocation === null) {
+      throw new Error(
+        `WebGLMap: failed to find uniform location for "u_matrix"`,
+      );
+    }
+    this.matrixUniformLocation = matrixUniformLocation;
 
     this.gl.deleteShader(vertexShader);
     this.gl.deleteShader(fragmentShader);
