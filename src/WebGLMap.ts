@@ -1,5 +1,5 @@
+import { Camera } from './Camera';
 import { compileShader, createProgram } from './gl-utils';
-import { multiply, scale, translation, type Mat3 } from './mat3';
 import { fragmentShaderSource, vertexShaderSource } from './shaders';
 
 export interface WebGLMapOptions {
@@ -11,23 +11,21 @@ export interface WebGLMapOptions {
 export class WebGLMap {
   private containerId: string;
   private container?: HTMLDivElement;
-  private center: [number, number];
-  private zoom: number;
   private canvas!: HTMLCanvasElement;
   private program!: WebGLProgram;
   private gl!: WebGL2RenderingContext;
   private positionAttribLocation!: number;
   private matrixUniformLocation!: WebGLUniformLocation;
   private isDragging: boolean = false;
+  private camera!: Camera;
 
   constructor(options: WebGLMapOptions) {
     this.containerId = options.containerId;
-    this.center = options.center ?? [0, 0];
-    this.zoom = options.zoom ?? 1;
 
     this.initCanvas();
     this.initGL();
     this.initProgram();
+    this.initCamera(options.center, options.zoom);
     this.bindEvents();
 
     this.render();
@@ -40,20 +38,20 @@ export class WebGLMap {
     this.gl.uniformMatrix3fv(
       this.matrixUniformLocation,
       false,
-      this.getMatrix(),
+      this.camera.getMatrix(),
     );
 
     const positions = new Float32Array([0, 0.5, -0.5, 0, 0.5, 0]);
     this.drawTriangle(positions);
   }
 
-  getMatrix() {
-    const z = this.zoom;
-    const [cx, cy] = this.center;
-    const translationMatrix: Mat3 = translation(-cx, -cy);
-    const scaleMatrix: Mat3 = scale(z, z);
-    const matrix = multiply(scaleMatrix, translationMatrix);
-    return matrix;
+  initCamera(center?: [number, number], zoom?: number) {
+    this.camera = new Camera({
+      center: center,
+      zoom: zoom,
+      viewportWidth: this.canvas.width,
+      viewportHeight: this.canvas.height,
+    });
   }
 
   bindEvents() {
@@ -68,22 +66,14 @@ export class WebGLMap {
       e.preventDefault();
 
       const rect = this.canvas.getBoundingClientRect();
-
       const canvasX = e.clientX - rect.left;
       const canvasY = e.clientY - rect.top;
-
       const clipX = (canvasX / rect.width) * 2 - 1;
       const clipY = -((canvasY / rect.height) * 2 - 1);
 
-      const worldX = this.center[0] + clipX / this.zoom;
-      const worldY = this.center[1] + clipY / this.zoom;
-
       const factor = e.deltaY < 0 ? 1.1 : 0.9;
-      this.zoom *= factor;
 
-      this.center[0] = worldX - clipX / this.zoom;
-      this.center[1] = worldY - clipY / this.zoom;
-
+      this.camera.zoomAt(clipX, clipY, factor);
       this.render();
     });
   }
@@ -91,10 +81,7 @@ export class WebGLMap {
   bindMouseMoveEvent() {
     window.addEventListener('mousemove', (e) => {
       if (!this.isDragging) return;
-
-      this.center[0] -= (e.movementX * (2 / this.canvas.width)) / this.zoom;
-      this.center[1] += (e.movementY * (2 / this.canvas.height)) / this.zoom;
-
+      this.camera.pan(e.movementX, e.movementY);
       this.render();
     });
   }
