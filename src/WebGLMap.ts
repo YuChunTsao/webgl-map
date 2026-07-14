@@ -1,6 +1,8 @@
 import { Camera } from './Camera';
 import { compileShader, createProgram } from './gl-utils';
+import { lngLatToMercator } from './mercator';
 import { fragmentShaderSource, vertexShaderSource } from './shaders';
+import type { Color, LngLat } from './types';
 
 export interface WebGLMapOptions {
   containerId: string;
@@ -16,6 +18,7 @@ export class WebGLMap {
   private gl!: WebGL2RenderingContext;
   private positionAttribLocation!: number;
   private matrixUniformLocation!: WebGLUniformLocation;
+  private colorUniformLocation!: WebGLUniformLocation;
   private isDragging: boolean = false;
   private camera!: Camera;
 
@@ -41,8 +44,45 @@ export class WebGLMap {
       this.camera.getMatrix(),
     );
 
-    const positions = new Float32Array([0, 0.5, -0.5, 0, 0.5, 0]);
-    this.drawTriangle(positions);
+    const WEB_MERCATOR_LAT_LIMIT = 85.05112878;
+
+    const worldBoundsPolygons: LngLat[][] = [
+      [
+        { lng: -180, lat: WEB_MERCATOR_LAT_LIMIT },
+        { lng: 180, lat: WEB_MERCATOR_LAT_LIMIT },
+        { lng: 180, lat: -WEB_MERCATOR_LAT_LIMIT },
+      ],
+      [
+        { lng: -180, lat: WEB_MERCATOR_LAT_LIMIT },
+        { lng: -180, lat: -WEB_MERCATOR_LAT_LIMIT },
+        { lng: 180, lat: -WEB_MERCATOR_LAT_LIMIT },
+      ],
+    ];
+
+    this.drawTriangles(worldBoundsPolygons, [1.0, 1.0, 1.0, 1.0]);
+
+    const points: LngLat[] = [
+      { lng: 121.5654, lat: 25.033 }, // Taipei
+      { lng: -74.006, lat: 40.7128 }, // New York
+      { lng: -0.1276, lat: 51.5074 }, // London
+      { lng: 139.6917, lat: 35.6895 }, // Tokyo
+      { lng: 151.2093, lat: -33.8688 }, // Sydney
+      { lng: 37.6173, lat: 55.7558 }, // Moscow
+      { lng: -43.1729, lat: -22.9068 }, // Rio de Janeiro
+    ];
+    this.drawPoints(points, [1.0, 0.7, 0.5, 1.0]);
+
+    const lines: [LngLat, LngLat][] = [
+      [
+        { lng: 121.5654, lat: 25.033 }, // Taipei
+        { lng: -74.006, lat: 40.7128 }, // New York
+      ],
+      [
+        { lng: 121.5654, lat: 25.033 }, // Taipei
+        { lng: 139.6917, lat: 35.6895 }, // Tokyo
+      ],
+    ];
+    this.drawLines(lines, [1.0, 0.0, 0.0, 1.0]);
   }
 
   initCamera(center?: [number, number], zoom?: number) {
@@ -68,12 +108,11 @@ export class WebGLMap {
       const rect = this.canvas.getBoundingClientRect();
       const canvasX = e.clientX - rect.left;
       const canvasY = e.clientY - rect.top;
-      const clipX = (canvasX / rect.width) * 2 - 1;
-      const clipY = -((canvasY / rect.height) * 2 - 1);
 
       const factor = e.deltaY < 0 ? 1.1 : 0.9;
 
-      this.camera.zoomAt(clipX, clipY, factor);
+      this.camera.zoomAt(canvasX, canvasY, factor);
+
       this.render();
     });
   }
@@ -100,7 +139,54 @@ export class WebGLMap {
     });
   }
 
-  drawTriangle(positions: Float32Array) {
+  drawPoints(points: LngLat[], color: Color) {
+    const data: number[] = [];
+    for (const point of points) {
+      const { x, y } = lngLatToMercator(point);
+      data.push(x, y);
+    }
+
+    const positions = new Float32Array(data);
+    this.drawGeometry(positions, this.gl.POINTS, color);
+  }
+
+  drawLines(lines: [LngLat, LngLat][], color: Color) {
+    const data: number[] = [];
+    for (const line of lines) {
+      const { x: fromX, y: fromY } = lngLatToMercator(line[0]);
+      const { x: toX, y: toY } = lngLatToMercator(line[1]);
+      data.push(fromX, fromY, toX, toY);
+    }
+
+    const positions = new Float32Array(data);
+    this.drawGeometry(positions, this.gl.LINES, color);
+  }
+
+  drawTriangles(triangles: LngLat[][], color: Color) {
+    const data: number[] = [];
+    for (const triangle of triangles) {
+      for (const vertex of triangle) {
+        const { x, y } = lngLatToMercator(vertex);
+        data.push(x, y);
+      }
+    }
+
+    const positions = new Float32Array(data);
+    this.drawGeometry(positions, this.gl.TRIANGLES, color);
+  }
+
+  drawBounds(bounds: LngLat[], color: Color) {
+    const data: number[] = [];
+    for (const lnglat of bounds) {
+      const { x, y } = lngLatToMercator(lnglat);
+      data.push(x, y);
+    }
+
+    const positions = new Float32Array(data);
+    this.drawGeometry(positions, this.gl.LINE_LOOP, color);
+  }
+
+  drawGeometry(positions: Float32Array, mode: GLenum, color: Color) {
     const buffer = this.gl.createBuffer();
     this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
     this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
@@ -117,8 +203,10 @@ export class WebGLMap {
       0,
     );
 
+    this.gl.uniform4f(this.colorUniformLocation, ...color);
+
     const vertexCount = positions.length / 2;
-    this.gl.drawArrays(this.gl.TRIANGLES, 0, vertexCount);
+    this.gl.drawArrays(mode, 0, vertexCount);
 
     this.gl.deleteBuffer(buffer);
     this.gl.deleteVertexArray(vao);
@@ -159,6 +247,17 @@ export class WebGLMap {
       );
     }
     this.matrixUniformLocation = matrixUniformLocation;
+
+    const colorUniformLocation = this.gl.getUniformLocation(
+      this.program,
+      'u_color',
+    );
+    if (colorUniformLocation === null) {
+      throw new Error(
+        `WebGLMap: failed to find uniform location for "u_color"`,
+      );
+    }
+    this.colorUniformLocation = colorUniformLocation;
 
     this.gl.deleteShader(vertexShader);
     this.gl.deleteShader(fragmentShader);

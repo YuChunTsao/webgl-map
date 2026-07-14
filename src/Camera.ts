@@ -1,5 +1,7 @@
 import { multiply, scale, translation, type Mat3 } from './mat3';
 
+const TILE_SIZE = 512;
+
 export interface CameraOptions {
   center?: [number, number];
   zoom?: number;
@@ -14,32 +16,83 @@ export class Camera {
   private viewportHeight: number;
 
   constructor(options: CameraOptions) {
-    this.center = options.center ? [...options.center] : [0, 0];
-    this.zoom = options.zoom ?? 1;
+    this.center = options.center ? [...options.center] : [0.5, 0.5];
+    this.zoom = options.zoom ?? 0;
     this.viewportHeight = options.viewportHeight;
     this.viewportWidth = options.viewportWidth;
   }
 
+  get worldSize() {
+    return TILE_SIZE * Math.pow(2, this.zoom);
+  }
+
   pan(dxPixels: number, dyPixels: number) {
-    this.center[0] -= (dxPixels * (2 / this.viewportWidth)) / this.zoom;
-    this.center[1] += (dyPixels * (2 / this.viewportHeight)) / this.zoom;
+    const [dxMercator, dyMercator] = this.worldPxToMercator(dxPixels, dyPixels);
+
+    this.center[0] -= dxMercator;
+    this.center[1] -= dyMercator;
   }
 
-  zoomAt(clipX: number, clipY: number, factor: number) {
-    const worldX = this.center[0] + clipX / this.zoom;
-    const worldY = this.center[1] + clipY / this.zoom;
+  zoomAt(canvasX: number, canvasY: number, factor: number) {
+    const [anchorX, anchorY] = this.worldPxToMercator(
+      ...this.screenToWorldPx(canvasX, canvasY),
+    );
 
-    this.zoom *= factor;
+    this.zoom += Math.log2(factor);
 
-    this.center[0] = worldX - clipX / this.zoom;
-    this.center[1] = worldY - clipY / this.zoom;
+    const [driftedX, driftedY] = this.worldPxToMercator(
+      ...this.screenToWorldPx(canvasX, canvasY),
+    );
+
+    const offsetX = anchorX - driftedX;
+    const offsetY = anchorY - driftedY;
+
+    this.center[0] += offsetX;
+    this.center[1] += offsetY;
   }
 
+  // mercator -> world pixel -> screen -> clip space
   getMatrix(): Mat3 {
-    const [cx, cy] = this.center;
-    const z = this.zoom;
-    const translationMatrix: Mat3 = translation(-cx, -cy);
-    const scaleMatrix: Mat3 = scale(z, z);
-    return multiply(scaleMatrix, translationMatrix);
+    const { viewportWidth: w, viewportHeight: h } = this;
+
+    // mercator -> world pixel
+    const worldPxFromMercator = scale(this.worldSize, this.worldSize);
+
+    // world pixel -> screen
+    const [centerPxX, centerPxY] = this.mercatorToWorldPx(...this.center);
+    const screenFromWorldPx = translation(w / 2 - centerPxX, h / 2 - centerPxY);
+
+    // screen -> clip space
+    const clipFromScreen = multiply(
+      scale(2 / w, -2 / h),
+      translation(-w / 2, -h / 2),
+    );
+
+    return multiply(
+      clipFromScreen,
+      multiply(screenFromWorldPx, worldPxFromMercator),
+    );
+  }
+
+  private mercatorToWorldPx(x: number, y: number): [number, number] {
+    return [x * this.worldSize, y * this.worldSize];
+  }
+
+  private worldPxToMercator(x: number, y: number): [number, number] {
+    return [x / this.worldSize, y / this.worldSize];
+  }
+
+  private screenToWorldPx(x: number, y: number): [number, number] {
+    const { viewportWidth: w, viewportHeight: h } = this;
+
+    const screenCenterX = w / 2;
+    const screenCenterY = h / 2;
+
+    const [centerPxX, centerPxY] = this.mercatorToWorldPx(...this.center);
+
+    const worldX = x - screenCenterX + centerPxX;
+    const worldY = y - screenCenterY + centerPxY;
+
+    return [worldX, worldY];
   }
 }
