@@ -44,10 +44,14 @@ export function mercatorToTile(
   zoom: number,
 ): { z: number; x: number; y: number } {
   const z = Math.floor(zoom);
-  const scale = Math.pow(2, z);
+  const n = Math.pow(2, z);
+
+  const tileX = Math.floor(x * n);
+  const tileY = Math.floor(y * n);
+
   return {
-    z: z,
-    x: Math.floor(x * scale),
-    y: Math.floor(y * scale),
+    z,
+    x: ((tileX % n) + n) % n,
+    y: Math.min(Math.max(tileY, 0), n - 1),
   };
 }

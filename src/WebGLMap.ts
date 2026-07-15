@@ -30,6 +30,7 @@ export class WebGLMap {
   private isDragging: boolean = false;
   private camera!: Camera;
   private tileDrawCommands: TileDrawCommand[] = [];
+  private vectorTileUrl: string;
 
   constructor(options: WebGLMapOptions) {
     this.containerId = options.containerId;
@@ -40,10 +41,9 @@ export class WebGLMap {
     this.initCamera(options.center, options.zoom);
     this.bindEvents();
 
-    const url =
+    this.vectorTileUrl =
       'https://tiles.openstreetmap.us/vector/openmaptiles/{z}/{x}/{y}.mvt';
-    const { z, x, y } = mercatorToTile(...this.camera.center, this.camera.zoom);
-    this.loadTile(url, z, x, y);
+    this.updateVisibleTiles();
 
     this.render();
   }
@@ -91,6 +91,7 @@ export class WebGLMap {
 
       this.camera.zoomAt(canvasX, canvasY, factor);
 
+      this.updateVisibleTiles();
       this.render();
     });
   }
@@ -99,6 +100,7 @@ export class WebGLMap {
     window.addEventListener('mousemove', (e) => {
       if (!this.isDragging) return;
       this.camera.pan(e.movementX, e.movementY);
+      this.updateVisibleTiles();
       this.render();
     });
   }
@@ -134,7 +136,6 @@ export class WebGLMap {
     };
     const defaultColor: Color = [0.5, 0.5, 0.5, 1.0];
 
-    this.tileDrawCommands = [];
     for (const [layerName, layer] of Object.entries(tile.layers)) {
       const color = layerColors[layerName] ?? defaultColor;
       for (let i = 0; i < layer.length; i++) {
@@ -153,6 +154,28 @@ export class WebGLMap {
     const data = await response.arrayBuffer();
 
     return new VectorTile(new PbfReader(new Uint8Array(data)));
+  }
+
+  updateVisibleTiles() {
+    this.tileDrawCommands = [];
+
+    const { minX, minY, maxX, maxY } = this.camera.getBounds();
+    const z = Math.floor(this.camera.zoom);
+
+    const { x: minTileX, y: minTileY } = mercatorToTile(minX, minY, z);
+    const { x: maxTileX, y: maxTileY } = mercatorToTile(maxX, maxY, z);
+
+    const tiles = [];
+
+    for (let x = minTileX; x <= maxTileX; x++) {
+      for (let y = minTileY; y <= maxTileY; y++) {
+        tiles.push({ z, x, y });
+      }
+    }
+
+    for (const { z, x, y } of tiles) {
+      this.loadTile(this.vectorTileUrl, z, x, y);
+    }
   }
 
   drawGeoJSON(geojson: GeoJSON, color: Color) {

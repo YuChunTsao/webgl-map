@@ -34,6 +34,15 @@ export class Camera {
     return [...this._center];
   }
 
+  getBounds(): { minX: number; minY: number; maxX: number; maxY: number } {
+    const [minX, minY] = this.worldPxToMercator(...this.screenToWorldPx(0, 0));
+    const [maxX, maxY] = this.worldPxToMercator(
+      ...this.screenToWorldPx(this.viewportWidth, this.viewportHeight),
+    );
+
+    return { minX, minY, maxX, maxY };
+  }
+
   pan(dxPixels: number, dyPixels: number) {
     const [dxMercator, dyMercator] = this.worldPxToMercator(dxPixels, dyPixels);
 
