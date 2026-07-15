@@ -1,7 +1,7 @@
 import earcut, { flatten } from 'earcut';
-import type { GeoJSON, Geometry, Position, Ring } from './geojson';
 import { lngLatToMercator } from './mercator';
 import type { LngLat } from './types';
+import type { GeoJSON, Geometry, Position } from 'geojson';
 
 export interface DrawCommand {
   positions: Float32Array;
@@ -105,8 +105,8 @@ function lineToVertices(coordinates: Position[]): Float32Array {
   return new Float32Array(data);
 }
 
-function polygonToVertices(rings: Ring[]): Float32Array {
-  const projectedRings: Ring[] = rings.map((ring) => {
+function polygonToVertices(rings: Position[][]): Float32Array {
+  const projectedRings: Position[][] = rings.map((ring) => {
     return ring.map((position) => {
       const { x, y } = lngLatToMercator(positionToLngLat(position));
       return [x, y];

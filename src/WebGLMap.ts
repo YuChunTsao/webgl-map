@@ -7,7 +7,7 @@ import type {
   MultiPolygon,
   Point,
   Polygon,
-} from './geojson';
+} from 'geojson';
 import { compileShader, createProgram } from './gl-utils';
 import { fragmentShaderSource, vertexShaderSource } from './shaders';
 import type { Color } from './types';
