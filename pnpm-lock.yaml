@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      earcut:
+        specifier: ^3.2.3
+        version: 3.2.3
     devDependencies:
       '@types/node':
         specifier: ^25.6.2
@@ -397,6 +401,9 @@ packages:
     peerDependenciesMeta:
       oxc-resolver:
         optional: true
+
+  earcut@3.2.3:
+    resolution: {integrity: sha512-vnS4AVwp1KHAF13i1vp1/2D5evWy3k5u/iW/B81QVsUZtV8cv2tU0b2VNFlqvh4kYwrFMDdjPCfAmfyJW9y14Q==}
 
   empathic@2.0.1:
     resolution: {integrity: sha512-YGRs8knHhKHVShLkFET/rWAU8kmHbOV5LwN938RHI0pljAJ1Gf6SzXsSmRaEzcXTtOOmVqJ5+WtQPL5uigY50Q==}
@@ -1037,6 +1044,8 @@ snapshots:
   detect-libc@2.1.2: {}
 
   dts-resolver@3.0.0: {}
+
+  earcut@3.2.3: {}
 
   empathic@2.0.1: {}
 

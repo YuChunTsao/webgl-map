@@ -1,8 +1,17 @@
 import { Camera } from './Camera';
+import type {
+  GeoJSON,
+  LineString,
+  MultiLineString,
+  MultiPoint,
+  MultiPolygon,
+  Point,
+  Polygon,
+} from './geojson';
 import { compileShader, createProgram } from './gl-utils';
-import { lngLatToMercator } from './mercator';
 import { fragmentShaderSource, vertexShaderSource } from './shaders';
-import type { Color, LngLat } from './types';
+import type { Color } from './types';
+import { geoJSONToDrawCommands } from './geometry-draw';
 
 export interface WebGLMapOptions {
   containerId: string;
@@ -46,43 +55,112 @@ export class WebGLMap {
 
     const WEB_MERCATOR_LAT_LIMIT = 85.05112878;
 
-    const worldBoundsPolygons: LngLat[][] = [
-      [
-        { lng: -180, lat: WEB_MERCATOR_LAT_LIMIT },
-        { lng: 180, lat: WEB_MERCATOR_LAT_LIMIT },
-        { lng: 180, lat: -WEB_MERCATOR_LAT_LIMIT },
+    const worldBoundsPolygons: Polygon = {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [-180, WEB_MERCATOR_LAT_LIMIT],
+          [180, WEB_MERCATOR_LAT_LIMIT],
+          [180, -WEB_MERCATOR_LAT_LIMIT],
+          [-180, -WEB_MERCATOR_LAT_LIMIT],
+          [-180, WEB_MERCATOR_LAT_LIMIT],
+        ],
       ],
-      [
-        { lng: -180, lat: WEB_MERCATOR_LAT_LIMIT },
-        { lng: -180, lat: -WEB_MERCATOR_LAT_LIMIT },
-        { lng: 180, lat: -WEB_MERCATOR_LAT_LIMIT },
-      ],
-    ];
+    };
 
-    this.drawTriangles(worldBoundsPolygons, [1.0, 1.0, 1.0, 1.0]);
+    this.drawGeoJSON(worldBoundsPolygons, [1.0, 1.0, 1.0, 1.0]);
 
-    const points: LngLat[] = [
-      { lng: 121.5654, lat: 25.033 }, // Taipei
-      { lng: -74.006, lat: 40.7128 }, // New York
-      { lng: -0.1276, lat: 51.5074 }, // London
-      { lng: 139.6917, lat: 35.6895 }, // Tokyo
-      { lng: 151.2093, lat: -33.8688 }, // Sydney
-      { lng: 37.6173, lat: 55.7558 }, // Moscow
-      { lng: -43.1729, lat: -22.9068 }, // Rio de Janeiro
-    ];
-    this.drawPoints(points, [1.0, 0.7, 0.5, 1.0]);
+    const points: MultiPoint = {
+      type: 'MultiPoint',
+      coordinates: [
+        [121.5654, 25.033], // Taipei
+        [-74.006, 40.7128], // New York
+        [-0.1276, 51.5074], // London
+        [139.6917, 35.6895], // Tokyo
+        [151.2093, -33.8688], // Sydney
+        [37.6173, 55.7558], // Moscow
+        [-43.1729, -22.9068], // Rio de Janeiro
+      ],
+    };
+    this.drawGeoJSON(points, [1.0, 0.1, 0.0, 1.0]);
 
-    const lines: [LngLat, LngLat][] = [
-      [
-        { lng: 121.5654, lat: 25.033 }, // Taipei
-        { lng: -74.006, lat: 40.7128 }, // New York
+    const point: Point = {
+      type: 'Point',
+      coordinates: [2.3522, 48.8566], // Paris
+    };
+    this.drawGeoJSON(point, [0.0, 0.5, 1.0, 1.0]);
+
+    const lines: LineString = {
+      type: 'LineString',
+      coordinates: [
+        [121.5654, 25.033], // Taipei
+        [-74.006, 40.7128], // New York
+        [121.5654, 25.033], // Taipei
+        [139.6917, 35.6895], // Tokyo
       ],
-      [
-        { lng: 121.5654, lat: 25.033 }, // Taipei
-        { lng: 139.6917, lat: 35.6895 }, // Tokyo
+    };
+    this.drawGeoJSON(lines, [0.0, 1.0, 0.0, 1.0]);
+
+    const multiLine: MultiLineString = {
+      type: 'MultiLineString',
+      coordinates: [
+        [
+          [121.5654, 25.033], // Taipei
+          [151.2093, -33.8688], // Sydney
+        ],
+        [
+          [-0.1276, 51.5074], // London
+          [37.6173, 55.7558], // Moscow
+        ],
       ],
-    ];
-    this.drawLines(lines, [1.0, 0.0, 0.0, 1.0]);
+    };
+    this.drawGeoJSON(multiLine, [0.0, 0.0, 1.0, 1.0]);
+
+    const multiPolygon: MultiPolygon = {
+      type: 'MultiPolygon',
+      coordinates: [
+        [
+          [
+            [100, 10],
+            [110, 10],
+            [110, 20],
+            [100, 20],
+            [100, 10],
+          ],
+        ],
+        [
+          [
+            [-60, -10],
+            [-50, -10],
+            [-50, 0],
+            [-60, 0],
+            [-60, -10],
+          ],
+        ],
+      ],
+    };
+    this.drawGeoJSON(multiPolygon, [0.5, 0.0, 1.0, 1.0]);
+
+    const polygonWithHole: Polygon = {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [-10, 40],
+          [0, 40],
+          [0, 50],
+          [-10, 50],
+          [-10, 40],
+        ],
+        [
+          [-7, 43],
+          [-7, 47],
+          [-3, 47],
+          [-3, 43],
+          [-7, 43],
+        ],
+      ],
+    };
+    this.drawGeoJSON(polygonWithHole, [0.0, 1.0, 1.0, 1.0]);
   }
 
   initCamera(center?: [number, number], zoom?: number) {
@@ -139,51 +217,10 @@ export class WebGLMap {
     });
   }
 
-  drawPoints(points: LngLat[], color: Color) {
-    const data: number[] = [];
-    for (const point of points) {
-      const { x, y } = lngLatToMercator(point);
-      data.push(x, y);
+  drawGeoJSON(geojson: GeoJSON, color: Color) {
+    for (const cmd of geoJSONToDrawCommands(geojson)) {
+      this.drawGeometry(cmd.positions, cmd.mode, color);
     }
-
-    const positions = new Float32Array(data);
-    this.drawGeometry(positions, this.gl.POINTS, color);
-  }
-
-  drawLines(lines: [LngLat, LngLat][], color: Color) {
-    const data: number[] = [];
-    for (const line of lines) {
-      const { x: fromX, y: fromY } = lngLatToMercator(line[0]);
-      const { x: toX, y: toY } = lngLatToMercator(line[1]);
-      data.push(fromX, fromY, toX, toY);
-    }
-
-    const positions = new Float32Array(data);
-    this.drawGeometry(positions, this.gl.LINES, color);
-  }
-
-  drawTriangles(triangles: LngLat[][], color: Color) {
-    const data: number[] = [];
-    for (const triangle of triangles) {
-      for (const vertex of triangle) {
-        const { x, y } = lngLatToMercator(vertex);
-        data.push(x, y);
-      }
-    }
-
-    const positions = new Float32Array(data);
-    this.drawGeometry(positions, this.gl.TRIANGLES, color);
-  }
-
-  drawBounds(bounds: LngLat[], color: Color) {
-    const data: number[] = [];
-    for (const lnglat of bounds) {
-      const { x, y } = lngLatToMercator(lnglat);
-      data.push(x, y);
-    }
-
-    const positions = new Float32Array(data);
-    this.drawGeometry(positions, this.gl.LINE_LOOP, color);
   }
 
   drawGeometry(positions: Float32Array, mode: GLenum, color: Color) {
