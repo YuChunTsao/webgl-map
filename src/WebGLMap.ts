@@ -1,17 +1,15 @@
 import { Camera } from './Camera';
-import type {
-  GeoJSON,
-  LineString,
-  MultiLineString,
-  MultiPoint,
-  MultiPolygon,
-  Point,
-  Polygon,
-} from 'geojson';
+import type { GeoJSON } from 'geojson';
 import { compileShader, createProgram } from './gl-utils';
 import { fragmentShaderSource, vertexShaderSource } from './shaders';
 import type { Color } from './types';
-import { geoJSONToDrawCommands } from './geometry-draw';
+import { geoJSONToDrawCommands, type DrawCommand } from './geometry-draw';
+import { VectorTile } from '@mapbox/vector-tile';
+import { PbfReader } from 'pbf';
+
+interface TileDrawCommand extends DrawCommand {
+  color: Color;
+}
 
 export interface WebGLMapOptions {
   containerId: string;
@@ -30,6 +28,7 @@ export class WebGLMap {
   private colorUniformLocation!: WebGLUniformLocation;
   private isDragging: boolean = false;
   private camera!: Camera;
+  private tileDrawCommands: TileDrawCommand[] = [];
 
   constructor(options: WebGLMapOptions) {
     this.containerId = options.containerId;
@@ -39,6 +38,10 @@ export class WebGLMap {
     this.initProgram();
     this.initCamera(options.center, options.zoom);
     this.bindEvents();
+
+    const url =
+      'https://tiles.openstreetmap.us/vector/openmaptiles/{z}/{x}/{y}.mvt';
+    this.loadTile(url, 0, 0, 0);
 
     this.render();
   }
@@ -53,114 +56,9 @@ export class WebGLMap {
       this.camera.getMatrix(),
     );
 
-    const WEB_MERCATOR_LAT_LIMIT = 85.05112878;
-
-    const worldBoundsPolygons: Polygon = {
-      type: 'Polygon',
-      coordinates: [
-        [
-          [-180, WEB_MERCATOR_LAT_LIMIT],
-          [180, WEB_MERCATOR_LAT_LIMIT],
-          [180, -WEB_MERCATOR_LAT_LIMIT],
-          [-180, -WEB_MERCATOR_LAT_LIMIT],
-          [-180, WEB_MERCATOR_LAT_LIMIT],
-        ],
-      ],
-    };
-
-    this.drawGeoJSON(worldBoundsPolygons, [1.0, 1.0, 1.0, 1.0]);
-
-    const points: MultiPoint = {
-      type: 'MultiPoint',
-      coordinates: [
-        [121.5654, 25.033], // Taipei
-        [-74.006, 40.7128], // New York
-        [-0.1276, 51.5074], // London
-        [139.6917, 35.6895], // Tokyo
-        [151.2093, -33.8688], // Sydney
-        [37.6173, 55.7558], // Moscow
-        [-43.1729, -22.9068], // Rio de Janeiro
-      ],
-    };
-    this.drawGeoJSON(points, [1.0, 0.1, 0.0, 1.0]);
-
-    const point: Point = {
-      type: 'Point',
-      coordinates: [2.3522, 48.8566], // Paris
-    };
-    this.drawGeoJSON(point, [0.0, 0.5, 1.0, 1.0]);
-
-    const lines: LineString = {
-      type: 'LineString',
-      coordinates: [
-        [121.5654, 25.033], // Taipei
-        [-74.006, 40.7128], // New York
-        [121.5654, 25.033], // Taipei
-        [139.6917, 35.6895], // Tokyo
-      ],
-    };
-    this.drawGeoJSON(lines, [0.0, 1.0, 0.0, 1.0]);
-
-    const multiLine: MultiLineString = {
-      type: 'MultiLineString',
-      coordinates: [
-        [
-          [121.5654, 25.033], // Taipei
-          [151.2093, -33.8688], // Sydney
-        ],
-        [
-          [-0.1276, 51.5074], // London
-          [37.6173, 55.7558], // Moscow
-        ],
-      ],
-    };
-    this.drawGeoJSON(multiLine, [0.0, 0.0, 1.0, 1.0]);
-
-    const multiPolygon: MultiPolygon = {
-      type: 'MultiPolygon',
-      coordinates: [
-        [
-          [
-            [100, 10],
-            [110, 10],
-            [110, 20],
-            [100, 20],
-            [100, 10],
-          ],
-        ],
-        [
-          [
-            [-60, -10],
-            [-50, -10],
-            [-50, 0],
-            [-60, 0],
-            [-60, -10],
-          ],
-        ],
-      ],
-    };
-    this.drawGeoJSON(multiPolygon, [0.5, 0.0, 1.0, 1.0]);
-
-    const polygonWithHole: Polygon = {
-      type: 'Polygon',
-      coordinates: [
-        [
-          [-10, 40],
-          [0, 40],
-          [0, 50],
-          [-10, 50],
-          [-10, 40],
-        ],
-        [
-          [-7, 43],
-          [-7, 47],
-          [-3, 47],
-          [-3, 43],
-          [-7, 43],
-        ],
-      ],
-    };
-    this.drawGeoJSON(polygonWithHole, [0.0, 1.0, 1.0, 1.0]);
+    for (const cmd of this.tileDrawCommands) {
+      this.drawGeometry(cmd.positions, cmd.mode, cmd.color);
+    }
   }
 
   initCamera(center?: [number, number], zoom?: number) {
@@ -215,6 +113,44 @@ export class WebGLMap {
       this.isDragging = false;
       this.canvas.style.cursor = 'grab';
     });
+  }
+
+  async loadTile(url: string, z: number, x: number, y: number) {
+    const tileUrl = url
+      .replace('{z}', String(z))
+      .replace('{x}', String(x))
+      .replace('{y}', String(y));
+    const tile = await this.fetchTile(tileUrl);
+
+    // TODO: Allow users to customize layer colors.
+    const layerColors: Record<string, Color> = {
+      water: [0.4, 0.6, 0.9, 1.0],
+      landcover: [0.6, 0.8, 0.5, 1.0],
+      boundary: [0.2, 0.2, 0.2, 1.0],
+      place: [0.9, 0.3, 0.1, 1.0],
+      water_name: [0.1, 0.3, 0.6, 1.0],
+    };
+    const defaultColor: Color = [0.5, 0.5, 0.5, 1.0];
+
+    this.tileDrawCommands = [];
+    for (const [layerName, layer] of Object.entries(tile.layers)) {
+      const color = layerColors[layerName] ?? defaultColor;
+      for (let i = 0; i < layer.length; i++) {
+        const geojson = layer.feature(i).toGeoJSON(x, y, z);
+        for (const cmd of geoJSONToDrawCommands(geojson)) {
+          this.tileDrawCommands.push({ ...cmd, color });
+        }
+      }
+    }
+
+    this.render();
+  }
+
+  async fetchTile(url: string): Promise<VectorTile> {
+    const response = await fetch(url);
+    const data = await response.arrayBuffer();
+
+    return new VectorTile(new PbfReader(new Uint8Array(data)));
   }
 
   drawGeoJSON(geojson: GeoJSON, color: Color) {
