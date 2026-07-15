@@ -6,6 +6,7 @@ import type { Color } from './types';
 import { geoJSONToDrawCommands, type DrawCommand } from './geometry-draw';
 import { VectorTile } from '@mapbox/vector-tile';
 import { PbfReader } from 'pbf';
+import { mercatorToTile } from './mercator';
 
 interface TileDrawCommand extends DrawCommand {
   color: Color;
@@ -41,7 +42,8 @@ export class WebGLMap {
 
     const url =
       'https://tiles.openstreetmap.us/vector/openmaptiles/{z}/{x}/{y}.mvt';
-    this.loadTile(url, 0, 0, 0);
+    const { z, x, y } = mercatorToTile(...this.camera.center, this.camera.zoom);
+    this.loadTile(url, z, x, y);
 
     this.render();
   }

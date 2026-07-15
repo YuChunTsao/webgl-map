@@ -37,3 +37,17 @@ export function mercatorToLngLat(x: number, y: number): LngLat {
 
   return { lng, lat };
 }
+
+export function mercatorToTile(
+  x: number,
+  y: number,
+  zoom: number,
+): { z: number; x: number; y: number } {
+  const z = Math.floor(zoom);
+  const scale = Math.pow(2, z);
+  return {
+    z: z,
+    x: Math.floor(x * scale),
+    y: Math.floor(y * scale),
+  };
+}

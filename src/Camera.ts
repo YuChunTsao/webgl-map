@@ -10,27 +10,35 @@ export interface CameraOptions {
 }
 
 export class Camera {
-  private center: [number, number];
-  private zoom: number;
+  private _center: [number, number];
+  private _zoom: number;
   private viewportWidth: number;
   private viewportHeight: number;
 
   constructor(options: CameraOptions) {
-    this.center = options.center ? [...options.center] : [0.5, 0.5];
-    this.zoom = options.zoom ?? 0;
+    this._center = options.center ? [...options.center] : [0.5, 0.5];
+    this._zoom = options.zoom ?? 0;
     this.viewportHeight = options.viewportHeight;
     this.viewportWidth = options.viewportWidth;
   }
 
   get worldSize() {
-    return TILE_SIZE * Math.pow(2, this.zoom);
+    return TILE_SIZE * Math.pow(2, this._zoom);
+  }
+
+  get zoom(): number {
+    return this._zoom;
+  }
+
+  get center(): [number, number] {
+    return [...this._center];
   }
 
   pan(dxPixels: number, dyPixels: number) {
     const [dxMercator, dyMercator] = this.worldPxToMercator(dxPixels, dyPixels);
 
-    this.center[0] -= dxMercator;
-    this.center[1] -= dyMercator;
+    this._center[0] -= dxMercator;
+    this._center[1] -= dyMercator;
   }
 
   zoomAt(canvasX: number, canvasY: number, factor: number) {
@@ -38,7 +46,7 @@ export class Camera {
       ...this.screenToWorldPx(canvasX, canvasY),
     );
 
-    this.zoom += Math.log2(factor);
+    this._zoom += Math.log2(factor);
 
     const [driftedX, driftedY] = this.worldPxToMercator(
       ...this.screenToWorldPx(canvasX, canvasY),
@@ -47,8 +55,8 @@ export class Camera {
     const offsetX = anchorX - driftedX;
     const offsetY = anchorY - driftedY;
 
-    this.center[0] += offsetX;
-    this.center[1] += offsetY;
+    this._center[0] += offsetX;
+    this._center[1] += offsetY;
   }
 
   // mercator -> world pixel -> screen -> clip space
@@ -59,7 +67,7 @@ export class Camera {
     const worldPxFromMercator = scale(this.worldSize, this.worldSize);
 
     // world pixel -> screen
-    const [centerPxX, centerPxY] = this.mercatorToWorldPx(...this.center);
+    const [centerPxX, centerPxY] = this.mercatorToWorldPx(...this._center);
     const screenFromWorldPx = translation(w / 2 - centerPxX, h / 2 - centerPxY);
 
     // screen -> clip space
@@ -88,7 +96,7 @@ export class Camera {
     const screenCenterX = w / 2;
     const screenCenterY = h / 2;
 
-    const [centerPxX, centerPxY] = this.mercatorToWorldPx(...this.center);
+    const [centerPxX, centerPxY] = this.mercatorToWorldPx(...this._center);
 
     const worldX = x - screenCenterX + centerPxX;
     const worldY = y - screenCenterY + centerPxY;
