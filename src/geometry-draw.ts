@@ -9,7 +9,10 @@ export interface DrawCommand {
 }
 
 export function geoJSONToDrawCommands(geojson: GeoJSON): DrawCommand[] {
-  return flattenToGeometries(geojson).flatMap(geometryToDrawCommand);
+  const commands = flattenToGeometries(geojson).flatMap(geometryToDrawCommand);
+
+  // Merge commands that share a draw mode, so each mode can be drawn in a single draw call.
+  return mergeDrawCommands(commands);
 }
 
 function flattenToGeometries(geojson: GeoJSON): Geometry[] {
@@ -125,4 +128,30 @@ function polygonToVertices(rings: Position[][]): Float32Array {
   }
 
   return new Float32Array(triangleVertices);
+}
+
+function mergeDrawCommands(commands: DrawCommand[]): DrawCommand[] {
+  // Group vertex arrays by draw mode.
+  const groups = new Map<GLenum, Float32Array[]>();
+  for (const { mode, positions } of commands) {
+    if (positions.length === 0) continue;
+    const group = groups.get(mode);
+    if (group === undefined) groups.set(mode, [positions]);
+    else group.push(positions);
+  }
+
+  // Concatenate each group into a single vertex array.
+  return [...groups].map(([mode, arrays]) => {
+    let totalLength = 0;
+    for (const arr of arrays) totalLength += arr.length;
+
+    const positions = new Float32Array(totalLength);
+    let offset = 0;
+    for (const arr of arrays) {
+      positions.set(arr, offset);
+      offset += arr.length;
+    }
+
+    return { mode, positions };
+  });
 }

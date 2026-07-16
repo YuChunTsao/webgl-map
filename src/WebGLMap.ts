@@ -1,5 +1,5 @@
 import { Camera } from './Camera';
-import type { GeoJSON } from 'geojson';
+import type { Feature, GeoJSON } from 'geojson';
 import { compileShader, createProgram } from './gl-utils';
 import { fragmentShaderSource, vertexShaderSource } from './shaders';
 import type { Color, LngLat } from './types';
@@ -197,11 +197,19 @@ export class WebGLMap {
     for (const [layerName, layer] of Object.entries(tile.layers)) {
       if (layerConfigs[layerName] === undefined) continue;
       const color = layerConfigs[layerName];
+
+      // Collect the whole layer into one FeatureCollection
+      const features: Feature[] = [];
       for (let i = 0; i < layer.length; i++) {
-        const geojson = layer.feature(i).toGeoJSON(x, y, z);
-        for (const cmd of geoJSONToDrawCommands(geojson)) {
-          tileDrawCommands.push({ ...cmd, color });
-        }
+        features.push(layer.feature(i).toGeoJSON(x, y, z));
+      }
+
+      const featureCollection: GeoJSON = {
+        type: 'FeatureCollection',
+        features,
+      };
+      for (const cmd of geoJSONToDrawCommands(featureCollection)) {
+        tileDrawCommands.push({ ...cmd, color });
       }
     }
 
