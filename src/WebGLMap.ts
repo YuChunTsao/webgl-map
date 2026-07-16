@@ -19,6 +19,7 @@ export interface WebGLMapOptions {
 }
 
 export class WebGLMap {
+  private static readonly MAX_CACHED_TILES = 256;
   private containerId: string;
   private container?: HTMLDivElement;
   private canvas!: HTMLCanvasElement;
@@ -156,6 +157,7 @@ export class WebGLMap {
     request
       .then((commands) => {
         this.cachedTiles.set(key, commands);
+        this.evictTiles();
         this.requestRender();
       })
       .catch((error) => {
@@ -237,7 +239,10 @@ export class WebGLMap {
     const visibleTileKeys: Set<string> = new Set();
     for (const { z, x, y } of tiles) {
       this.loadTile(this.vectorTileUrl, z, x, y);
-      visibleTileKeys.add(this.tileCacheKey(z, x, y));
+
+      const key = this.tileCacheKey(z, x, y);
+      visibleTileKeys.add(key);
+      this.touchTile(key);
     }
 
     // Abort in-flight requests for tiles that are no longer visible.
@@ -246,6 +251,21 @@ export class WebGLMap {
     }
 
     this.visibleTileKeys = visibleTileKeys;
+  }
+
+  private touchTile(key: string) {
+    const commands = this.cachedTiles.get(key);
+    if (commands === undefined) return;
+    this.cachedTiles.delete(key);
+    this.cachedTiles.set(key, commands);
+  }
+
+  private evictTiles() {
+    for (const key of this.cachedTiles.keys()) {
+      if (this.cachedTiles.size <= WebGLMap.MAX_CACHED_TILES) break;
+      if (this.visibleTileKeys.has(key)) continue;
+      this.cachedTiles.delete(key);
+    }
   }
 
   drawGeoJSON(geojson: GeoJSON, color: Color) {
