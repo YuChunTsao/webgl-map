@@ -29,7 +29,9 @@ export class WebGLMap {
   private colorUniformLocation!: WebGLUniformLocation;
   private isDragging: boolean = false;
   private camera!: Camera;
-  private tileDrawCommands: TileDrawCommand[] = [];
+  private cachedTiles: Map<string, TileDrawCommand[]> = new Map();
+  private tileRequests: Map<string, Promise<TileDrawCommand[]>> = new Map();
+  private visibleTileKeys: Set<string> = new Set();
   private vectorTileUrl: string;
 
   constructor(options: WebGLMapOptions) {
@@ -48,6 +50,10 @@ export class WebGLMap {
     this.render();
   }
 
+  private tileCacheKey(z: number, x: number, y: number) {
+    return `${z}/${x}/${y}`;
+  }
+
   render() {
     this.gl.useProgram(this.program);
     this.gl.clearColor(0.7, 0.7, 0.7, 1.0);
@@ -58,8 +64,12 @@ export class WebGLMap {
       this.camera.getMatrix(),
     );
 
-    for (const cmd of this.tileDrawCommands) {
-      this.drawGeometry(cmd.positions, cmd.mode, cmd.color);
+    for (const key of this.visibleTileKeys) {
+      const cacheTile = this.cachedTiles.get(key);
+      if (cacheTile === undefined) continue;
+      for (const cmd of cacheTile) {
+        this.drawGeometry(cmd.positions, cmd.mode, cmd.color);
+      }
     }
   }
 
@@ -121,7 +131,30 @@ export class WebGLMap {
     });
   }
 
-  async loadTile(url: string, z: number, x: number, y: number) {
+  loadTile(url: string, z: number, x: number, y: number) {
+    // If the tile has already been fetched, we don't fetch it again.
+    const key = this.tileCacheKey(z, x, y);
+    if (this.tileRequests.has(key)) return;
+
+    const request = this.parseTile(url, z, x, y);
+    this.tileRequests.set(key, request);
+
+    request
+      .then((commands) => {
+        this.cachedTiles.set(key, commands);
+        this.render();
+      })
+      .catch(() => {
+        this.tileRequests.delete(key);
+      });
+  }
+
+  private async parseTile(
+    url: string,
+    z: number,
+    x: number,
+    y: number,
+  ): Promise<TileDrawCommand[]> {
     const tileUrl = url
       .replace('{z}', String(z))
       .replace('{x}', String(x))
@@ -136,20 +169,21 @@ export class WebGLMap {
       place: [0.9, 0.3, 0.1, 1.0],
       water_name: [0.1, 0.3, 0.6, 1.0],
     };
-    const defaultColor: Color = [0.5, 0.5, 0.5, 1.0];
 
+    // Collect all data in the tile
+    const tileDrawCommands: TileDrawCommand[] = [];
     for (const [layerName, layer] of Object.entries(tile.layers)) {
       if (layerConfigs[layerName] === undefined) continue;
-      const color = layerConfigs[layerName] ?? defaultColor;
+      const color = layerConfigs[layerName];
       for (let i = 0; i < layer.length; i++) {
         const geojson = layer.feature(i).toGeoJSON(x, y, z);
         for (const cmd of geoJSONToDrawCommands(geojson)) {
-          this.tileDrawCommands.push({ ...cmd, color });
+          tileDrawCommands.push({ ...cmd, color });
         }
       }
     }
 
-    this.render();
+    return tileDrawCommands;
   }
 
   async fetchTile(url: string): Promise<VectorTile> {
@@ -160,8 +194,6 @@ export class WebGLMap {
   }
 
   updateVisibleTiles() {
-    this.tileDrawCommands = [];
-
     const { minX, minY, maxX, maxY } = this.camera.getBounds();
     const z = Math.floor(this.camera.zoom);
 
@@ -176,9 +208,13 @@ export class WebGLMap {
       }
     }
 
+    const visibleTileKeys: Set<string> = new Set();
     for (const { z, x, y } of tiles) {
       this.loadTile(this.vectorTileUrl, z, x, y);
+      visibleTileKeys.add(this.tileCacheKey(z, x, y));
     }
+
+    this.visibleTileKeys = visibleTileKeys;
   }
 
   drawGeoJSON(geojson: GeoJSON, color: Color) {
