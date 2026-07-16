@@ -129,7 +129,7 @@ export class WebGLMap {
     const tile = await this.fetchTile(tileUrl);
 
     // TODO: Allow users to customize layer colors.
-    const layerColors: Record<string, Color> = {
+    const layerConfigs: Record<string, Color> = {
       water: [0.4, 0.6, 0.9, 1.0],
       landcover: [0.6, 0.8, 0.5, 1.0],
       boundary: [0.2, 0.2, 0.2, 1.0],
@@ -139,7 +139,8 @@ export class WebGLMap {
     const defaultColor: Color = [0.5, 0.5, 0.5, 1.0];
 
     for (const [layerName, layer] of Object.entries(tile.layers)) {
-      const color = layerColors[layerName] ?? defaultColor;
+      if (layerConfigs[layerName] === undefined) continue;
+      const color = layerConfigs[layerName] ?? defaultColor;
       for (let i = 0; i < layer.length; i++) {
         const geojson = layer.feature(i).toGeoJSON(x, y, z);
         for (const cmd of geoJSONToDrawCommands(geojson)) {
