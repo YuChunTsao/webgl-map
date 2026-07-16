@@ -12,6 +12,14 @@ interface TileDrawCommand extends DrawCommand {
   color: Color;
 }
 
+interface TileGPUCommand {
+  vao: WebGLVertexArrayObject;
+  buffer: WebGLBuffer;
+  mode: GLenum;
+  vertexCount: number;
+  color: Color;
+}
+
 export interface WebGLMapOptions {
   containerId: string;
   center?: LngLat;
@@ -30,7 +38,7 @@ export class WebGLMap {
   private colorUniformLocation!: WebGLUniformLocation;
   private isDragging: boolean = false;
   private camera!: Camera;
-  private cachedTiles: Map<string, TileDrawCommand[]> = new Map();
+  private cachedTiles: Map<string, TileGPUCommand[]> = new Map();
   private tileRequests: Map<string, AbortController> = new Map();
   private visibleTileKeys: Set<string> = new Set();
   private vectorTileUrl: string;
@@ -81,7 +89,9 @@ export class WebGLMap {
       const cacheTile = this.cachedTiles.get(key);
       if (cacheTile === undefined) continue;
       for (const cmd of cacheTile) {
-        this.drawGeometry(cmd.positions, cmd.mode, cmd.color);
+        this.gl.bindVertexArray(cmd.vao);
+        this.gl.uniform4f(this.colorUniformLocation, ...cmd.color);
+        this.gl.drawArrays(cmd.mode, 0, cmd.vertexCount);
       }
     }
   }
@@ -156,7 +166,7 @@ export class WebGLMap {
 
     request
       .then((commands) => {
-        this.cachedTiles.set(key, commands);
+        this.cachedTiles.set(key, this.uploadTile(commands));
         this.evictTiles();
         this.requestRender();
       })
@@ -216,6 +226,39 @@ export class WebGLMap {
     return tileDrawCommands;
   }
 
+  private uploadTile(commands: TileDrawCommand[]): TileGPUCommand[] {
+    const gpuCommands = commands.map(({ positions, mode, color }) => {
+      const buffer = this.gl.createBuffer();
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
+      this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
+
+      const vao = this.gl.createVertexArray();
+      this.gl.bindVertexArray(vao);
+      this.gl.enableVertexAttribArray(this.positionAttribLocation);
+      this.gl.vertexAttribPointer(
+        this.positionAttribLocation,
+        2,
+        this.gl.FLOAT,
+        false,
+        0,
+        0,
+      );
+
+      return { vao, buffer, mode, color, vertexCount: positions.length / 2 };
+    });
+
+    // Unbind so later GL calls can't accidentally modify the last VAO.
+    this.gl.bindVertexArray(null);
+    return gpuCommands;
+  }
+
+  private destroyTile(commands: TileGPUCommand[]) {
+    for (const { vao, buffer } of commands) {
+      this.gl.deleteVertexArray(vao);
+      this.gl.deleteBuffer(buffer);
+    }
+  }
+
   async fetchTile(
     url: string,
     signal: AbortSignal,
@@ -272,6 +315,9 @@ export class WebGLMap {
     for (const key of this.cachedTiles.keys()) {
       if (this.cachedTiles.size <= WebGLMap.MAX_CACHED_TILES) break;
       if (this.visibleTileKeys.has(key)) continue;
+
+      // GPU memory must be freed explicitly.
+      this.destroyTile(this.cachedTiles.get(key)!);
       this.cachedTiles.delete(key);
     }
   }
