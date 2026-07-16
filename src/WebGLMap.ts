@@ -33,6 +33,7 @@ export class WebGLMap {
   private tileRequests: Map<string, Promise<TileDrawCommand[]>> = new Map();
   private visibleTileKeys: Set<string> = new Set();
   private vectorTileUrl: string;
+  private renderRequested: boolean = false;
 
   constructor(options: WebGLMapOptions) {
     this.containerId = options.containerId;
@@ -47,11 +48,22 @@ export class WebGLMap {
       'https://tiles.openstreetmap.us/vector/openmaptiles/{z}/{x}/{y}.mvt';
     this.updateVisibleTiles();
 
-    this.render();
+    this.requestRender();
   }
 
   private tileCacheKey(z: number, x: number, y: number) {
     return `${z}/${x}/${y}`;
+  }
+
+  // Avoid rendering more than once per frame
+  requestRender() {
+    if (this.renderRequested) return;
+    this.renderRequested = true;
+
+    requestAnimationFrame(() => {
+      this.renderRequested = false;
+      this.render();
+    });
   }
 
   render() {
@@ -104,7 +116,7 @@ export class WebGLMap {
       this.camera.zoomAt(canvasX, canvasY, factor);
 
       this.updateVisibleTiles();
-      this.render();
+      this.requestRender();
     });
   }
 
@@ -113,7 +125,7 @@ export class WebGLMap {
       if (!this.isDragging) return;
       this.camera.pan(e.movementX, e.movementY);
       this.updateVisibleTiles();
-      this.render();
+      this.requestRender();
     });
   }
 
@@ -142,7 +154,7 @@ export class WebGLMap {
     request
       .then((commands) => {
         this.cachedTiles.set(key, commands);
-        this.render();
+        this.requestRender();
       })
       .catch(() => {
         this.tileRequests.delete(key);
