@@ -2,11 +2,11 @@ import { Camera } from './Camera';
 import type { GeoJSON } from 'geojson';
 import { compileShader, createProgram } from './gl-utils';
 import { fragmentShaderSource, vertexShaderSource } from './shaders';
-import type { Color } from './types';
+import type { Color, LngLat } from './types';
 import { geoJSONToDrawCommands, type DrawCommand } from './geometry-draw';
 import { VectorTile } from '@mapbox/vector-tile';
 import { PbfReader } from 'pbf';
-import { mercatorToTile } from './mercator';
+import { lngLatToMercator, mercatorToTile } from './mercator';
 
 interface TileDrawCommand extends DrawCommand {
   color: Color;
@@ -14,7 +14,7 @@ interface TileDrawCommand extends DrawCommand {
 
 export interface WebGLMapOptions {
   containerId: string;
-  center?: [number, number];
+  center?: LngLat;
   zoom?: number;
 }
 
@@ -63,9 +63,11 @@ export class WebGLMap {
     }
   }
 
-  initCamera(center?: [number, number], zoom?: number) {
+  initCamera(center?: LngLat, zoom?: number) {
+    const mercatorCenter = center ? lngLatToMercator(center) : undefined;
+
     this.camera = new Camera({
-      center: center,
+      center: mercatorCenter && [mercatorCenter.x, mercatorCenter.y],
       zoom: zoom,
       viewportWidth: this.canvas.width,
       viewportHeight: this.canvas.height,
