@@ -1,12 +1,7 @@
 import earcut, { flatten } from 'earcut';
 import { lngLatToMercator } from './mercator';
-import type { LngLat } from './types';
+import type { DrawCommand, LngLat } from './types';
 import type { GeoJSON, Geometry, Position } from 'geojson';
-
-export interface DrawCommand {
-  positions: Float32Array;
-  mode: GLenum;
-}
 
 export function geoJSONToDrawCommands(geojson: GeoJSON): DrawCommand[] {
   const commands = flattenToGeometries(geojson).flatMap(geometryToDrawCommand);

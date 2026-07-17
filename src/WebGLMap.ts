@@ -1,24 +1,11 @@
 import { Camera } from './Camera';
-import type { Feature, GeoJSON } from 'geojson';
+import type { GeoJSON } from 'geojson';
 import { compileShader, createProgram } from './gl-utils';
 import { fragmentShaderSource, vertexShaderSource } from './shaders';
-import type { Color, LngLat } from './types';
-import { geoJSONToDrawCommands, type DrawCommand } from './geometry-draw';
-import { VectorTile } from '@mapbox/vector-tile';
-import { PbfReader } from 'pbf';
+import type { Color, LngLat, TileDrawCommand, TileGPUCommand } from './types';
+import { geoJSONToDrawCommands } from './geometry-draw';
 import { lngLatToMercator, mercatorToTile } from './mercator';
-
-interface TileDrawCommand extends DrawCommand {
-  color: Color;
-}
-
-interface TileGPUCommand {
-  vao: WebGLVertexArrayObject;
-  buffer: WebGLBuffer;
-  mode: GLenum;
-  vertexCount: number;
-  color: Color;
-}
+import { TileWorker } from './TileWorker';
 
 export interface WebGLMapOptions {
   containerId: string;
@@ -39,10 +26,10 @@ export class WebGLMap {
   private isDragging: boolean = false;
   private camera!: Camera;
   private cachedTiles: Map<string, TileGPUCommand[]> = new Map();
-  private tileRequests: Map<string, AbortController> = new Map();
   private visibleTileKeys: Set<string> = new Set();
   private vectorTileUrl: string;
   private renderRequested: boolean = false;
+  private tileWorker: TileWorker = new TileWorker();
 
   constructor(options: WebGLMapOptions) {
     this.containerId = options.containerId;
@@ -157,69 +144,22 @@ export class WebGLMap {
   async loadTile(url: string, z: number, x: number, y: number) {
     // If the tile has already been fetched, we don't fetch it again.
     const key = this.tileCacheKey(z, x, y);
-    if (this.tileRequests.has(key) || this.cachedTiles.has(key)) return;
+    if (this.tileWorker.isLoading(key) || this.cachedTiles.has(key)) return;
 
-    const controller = new AbortController();
-    this.tileRequests.set(key, controller);
+    const tileUrl = url
+      .replace('{z}', String(z))
+      .replace('{x}', String(x))
+      .replace('{y}', String(y));
 
     try {
-      const tileUrl = url
-        .replace('{z}', String(z))
-        .replace('{x}', String(x))
-        .replace('{y}', String(y));
-
-      const tileData = await this.fetchTile(tileUrl, controller.signal);
-      const result = tileData === null ? [] : this.parseTile(tileData, z, x, y);
+      const result = await this.tileWorker.loadTile(key, tileUrl, z, x, y);
       this.cachedTiles.set(key, this.uploadTile(result));
       this.evictTiles();
       this.requestRender();
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') return;
       console.warn(`Failed to load tile ${key}:`, error);
-    } finally {
-      this.tileRequests.delete(key);
     }
-  }
-
-  private parseTile(
-    data: ArrayBuffer,
-    z: number,
-    x: number,
-    y: number,
-  ): TileDrawCommand[] {
-    const tile = new VectorTile(new PbfReader(data));
-
-    // TODO: Allow users to customize layer colors.
-    const layerConfigs: Record<string, Color> = {
-      water: [0.4, 0.6, 0.9, 1.0],
-      landcover: [0.6, 0.8, 0.5, 1.0],
-      boundary: [0.2, 0.2, 0.2, 1.0],
-      place: [0.9, 0.3, 0.1, 1.0],
-      water_name: [0.1, 0.3, 0.6, 1.0],
-    };
-
-    // Collect all data in the tile
-    const tileDrawCommands: TileDrawCommand[] = [];
-    for (const [layerName, layer] of Object.entries(tile.layers)) {
-      if (layerConfigs[layerName] === undefined) continue;
-      const color = layerConfigs[layerName];
-
-      // Collect the whole layer into one FeatureCollection
-      const features: Feature[] = [];
-      for (let i = 0; i < layer.length; i++) {
-        features.push(layer.feature(i).toGeoJSON(x, y, z));
-      }
-
-      const featureCollection: GeoJSON = {
-        type: 'FeatureCollection',
-        features,
-      };
-      for (const cmd of geoJSONToDrawCommands(featureCollection)) {
-        tileDrawCommands.push({ ...cmd, color });
-      }
-    }
-
-    return tileDrawCommands;
   }
 
   private uploadTile(commands: TileDrawCommand[]): TileGPUCommand[] {
@@ -255,18 +195,6 @@ export class WebGLMap {
     }
   }
 
-  async fetchTile(
-    url: string,
-    signal: AbortSignal,
-  ): Promise<ArrayBuffer | null> {
-    const response = await fetch(url, { signal });
-    if (response.status === 404) return null;
-    if (!response.ok)
-      throw new Error(`HTTP ${response.status} ${response.statusText}`);
-
-    return await response.arrayBuffer();
-  }
-
   updateVisibleTiles() {
     const { minX, minY, maxX, maxY } = this.camera.getBounds();
     const z = Math.floor(this.camera.zoom);
@@ -292,8 +220,8 @@ export class WebGLMap {
     }
 
     // Abort in-flight requests for tiles that are no longer visible.
-    for (const [key, controller] of this.tileRequests) {
-      if (!visibleTileKeys.has(key)) controller.abort();
+    for (const key of this.tileWorker.loadingKeys()) {
+      if (!visibleTileKeys.has(key)) this.tileWorker.abort(key);
     }
 
     this.visibleTileKeys = visibleTileKeys;
