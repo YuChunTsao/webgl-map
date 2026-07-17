@@ -11,6 +11,7 @@ export interface WebGLMapOptions {
   containerId: string;
   center?: LngLat;
   zoom?: number;
+  sourceMaxZoom?: number;
 }
 
 export class WebGLMap {
@@ -30,9 +31,11 @@ export class WebGLMap {
   private vectorTileUrl: string;
   private renderRequested: boolean = false;
   private tileWorker: TileWorker = new TileWorker();
+  private sourceMaxZoom: number;
 
   constructor(options: WebGLMapOptions) {
     this.containerId = options.containerId;
+    this.sourceMaxZoom = Math.floor(options.sourceMaxZoom ?? 14);
 
     this.initCanvas();
     this.initGL();
@@ -197,16 +200,19 @@ export class WebGLMap {
 
   updateVisibleTiles() {
     const { minX, minY, maxX, maxY } = this.camera.getBounds();
-    const z = Math.floor(this.camera.zoom);
+    const sourceZoom = Math.min(
+      Math.floor(this.camera.zoom),
+      this.sourceMaxZoom,
+    );
 
-    const { x: minTileX, y: minTileY } = mercatorToTile(minX, minY, z);
-    const { x: maxTileX, y: maxTileY } = mercatorToTile(maxX, maxY, z);
+    const { x: minTileX, y: minTileY } = mercatorToTile(minX, minY, sourceZoom);
+    const { x: maxTileX, y: maxTileY } = mercatorToTile(maxX, maxY, sourceZoom);
 
     const tiles = [];
 
     for (let x = minTileX; x <= maxTileX; x++) {
       for (let y = minTileY; y <= maxTileY; y++) {
-        tiles.push({ z, x, y });
+        tiles.push({ z: sourceZoom, x, y });
       }
     }
 
