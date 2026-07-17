@@ -154,7 +154,7 @@ export class WebGLMap {
     });
   }
 
-  loadTile(url: string, z: number, x: number, y: number) {
+  async loadTile(url: string, z: number, x: number, y: number) {
     // If the tile has already been fetched, we don't fetch it again.
     const key = this.tileCacheKey(z, x, y);
     if (this.tileRequests.has(key) || this.cachedTiles.has(key)) return;
@@ -162,36 +162,32 @@ export class WebGLMap {
     const controller = new AbortController();
     this.tileRequests.set(key, controller);
 
-    const request = this.parseTile(url, z, x, y, controller.signal);
+    try {
+      const tileUrl = url
+        .replace('{z}', String(z))
+        .replace('{x}', String(x))
+        .replace('{y}', String(y));
 
-    request
-      .then((commands) => {
-        this.cachedTiles.set(key, this.uploadTile(commands));
-        this.evictTiles();
-        this.requestRender();
-      })
-      .catch((error) => {
-        if (error.name === 'AbortError') return;
-        console.warn(`Failed to load tile ${key}:`, error);
-      })
-      .finally(() => {
-        this.tileRequests.delete(key);
-      });
+      const tileData = await this.fetchTile(tileUrl, controller.signal);
+      const result = tileData === null ? [] : this.parseTile(tileData, z, x, y);
+      this.cachedTiles.set(key, this.uploadTile(result));
+      this.evictTiles();
+      this.requestRender();
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') return;
+      console.warn(`Failed to load tile ${key}:`, error);
+    } finally {
+      this.tileRequests.delete(key);
+    }
   }
 
-  private async parseTile(
-    url: string,
+  private parseTile(
+    data: ArrayBuffer,
     z: number,
     x: number,
     y: number,
-    signal: AbortSignal,
-  ): Promise<TileDrawCommand[]> {
-    const tileUrl = url
-      .replace('{z}', String(z))
-      .replace('{x}', String(x))
-      .replace('{y}', String(y));
-    const tile = await this.fetchTile(tileUrl, signal);
-    if (tile === null) return []; // Tile not found
+  ): TileDrawCommand[] {
+    const tile = new VectorTile(new PbfReader(data));
 
     // TODO: Allow users to customize layer colors.
     const layerConfigs: Record<string, Color> = {
@@ -262,14 +258,13 @@ export class WebGLMap {
   async fetchTile(
     url: string,
     signal: AbortSignal,
-  ): Promise<VectorTile | null> {
+  ): Promise<ArrayBuffer | null> {
     const response = await fetch(url, { signal });
     if (response.status === 404) return null;
     if (!response.ok)
       throw new Error(`HTTP ${response.status} ${response.statusText}`);
 
-    const data = await response.arrayBuffer();
-    return new VectorTile(new PbfReader(new Uint8Array(data)));
+    return await response.arrayBuffer();
   }
 
   updateVisibleTiles() {
