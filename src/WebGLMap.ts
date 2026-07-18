@@ -34,7 +34,7 @@ export class WebGLMap {
   private isDragging: boolean = false;
   private camera!: Camera;
   private cachedTiles: Map<string, TileGPUCommand[]> = new Map();
-  private visibleTileKeys: Set<string> = new Set();
+  private visibleTileKeys: Map<string, Set<string>> = new Map(); // sourceId -> tile keys
   private renderRequested: boolean = false;
   private tileWorker: TileWorker = new TileWorker();
   private style: Style;
@@ -100,7 +100,9 @@ export class WebGLMap {
     for (const layer of this.style.layers) {
       this.gl.uniform4f(this.colorUniformLocation, ...layer.color);
 
-      for (const key of this.visibleTileKeys) {
+      const keys = this.visibleTileKeys.get(layer.source);
+      if (keys === undefined) continue;
+      for (const key of keys) {
         const tile = this.cachedTiles.get(key);
         if (tile === undefined) continue;
 
@@ -253,12 +255,13 @@ export class WebGLMap {
 
   updateVisibleTiles() {
     const { minX, minY, maxX, maxY } = this.camera.getBounds();
-    const visibleTileKeys: Set<string> = new Set();
 
     // Get all used sources from layers defined by users.
     const usedSource = new Set(this.style.layers.map((layer) => layer.source));
 
     for (const sourceId of usedSource) {
+      const visibleTileKeys: Set<string> = new Set();
+
       const source = this.style.sources[sourceId];
       const sourceZoom = Math.min(
         Math.floor(this.camera.zoom),
@@ -284,14 +287,22 @@ export class WebGLMap {
           this.touchTile(key);
         }
       }
+
+      this.visibleTileKeys.set(sourceId, visibleTileKeys);
     }
 
     // Abort in-flight requests for tiles that are no longer visible.
     for (const key of this.tileWorker.loadingKeys()) {
-      if (!visibleTileKeys.has(key)) this.tileWorker.abort(key);
+      if (!this.isTileVisible(key)) this.tileWorker.abort(key);
+    }
+  }
+
+  private isTileVisible(key: string): boolean {
+    for (const keys of this.visibleTileKeys.values()) {
+      if (keys.has(key)) return true;
     }
 
-    this.visibleTileKeys = visibleTileKeys;
+    return false;
   }
 
   private touchTile(key: string) {
@@ -304,7 +315,7 @@ export class WebGLMap {
   private evictTiles() {
     for (const key of this.cachedTiles.keys()) {
       if (this.cachedTiles.size <= WebGLMap.MAX_CACHED_TILES) break;
-      if (this.visibleTileKeys.has(key)) continue;
+      if (this.isTileVisible(key)) continue;
 
       // GPU memory must be freed explicitly.
       this.destroyTile(this.cachedTiles.get(key)!);
