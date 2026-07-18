@@ -91,6 +91,11 @@ export class Camera {
     );
   }
 
+  setViewportSize(width: number, height: number) {
+    this.viewportWidth = width;
+    this.viewportHeight = height;
+  }
+
   private mercatorToWorldPx(x: number, y: number): [number, number] {
     return [x * this.worldSize, y * this.worldSize];
   }

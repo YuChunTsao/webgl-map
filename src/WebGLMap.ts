@@ -17,7 +17,7 @@ export interface WebGLMapOptions {
 export class WebGLMap {
   private static readonly MAX_CACHED_TILES = 256;
   private containerId: string;
-  private container?: HTMLDivElement;
+  private container!: HTMLDivElement;
   private canvas!: HTMLCanvasElement;
   private program!: WebGLProgram;
   private gl!: WebGL2RenderingContext;
@@ -102,6 +102,7 @@ export class WebGLMap {
     this.bindMouseUpEvent();
     this.bindMouseMoveEvent();
     this.bindMouseWheelEvent();
+    new ResizeObserver(() => this.onResize()).observe(this.container);
   }
 
   bindMouseWheelEvent() {
@@ -142,6 +143,17 @@ export class WebGLMap {
       this.isDragging = false;
       this.canvas.style.cursor = 'grab';
     });
+  }
+
+  onResize() {
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    this.canvas.width = w;
+    this.canvas.height = h;
+    this.gl.viewport(0, 0, w, h);
+    this.camera.setViewportSize(w, h);
+    this.updateVisibleTiles();
+    this.render();
   }
 
   async loadTile(url: string, z: number, x: number, y: number) {
