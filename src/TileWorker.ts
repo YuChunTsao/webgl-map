@@ -1,5 +1,5 @@
 import type { WorkerRequest, WorkerResponse } from './tile-worker';
-import type { TileDrawCommand } from './types';
+import type { ParseLayer, TileDrawCommand } from './types';
 
 interface PendingTile {
   resolve: (commands: TileDrawCommand[]) => void;
@@ -31,6 +31,11 @@ export class TileWorker {
       }
       this.pending.clear();
     };
+  }
+
+  setLayers(layers: ParseLayer[]) {
+    const request: WorkerRequest = { type: 'setLayers', layers };
+    this.worker.postMessage(request);
   }
 
   loadTile(key: string, url: string, z: number, x: number, y: number) {

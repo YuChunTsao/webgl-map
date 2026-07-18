@@ -1,7 +1,8 @@
 import { fetchTile, parseTile } from './tile-parse';
-import type { TileDrawCommand } from './types';
+import type { ParseLayer, TileDrawCommand } from './types';
 
 export type WorkerRequest =
+  | { type: 'setLayers'; layers: ParseLayer[] }
   | { type: 'load'; key: string; url: string; z: number; x: number; y: number }
   | { type: 'abort'; key: string };
 
@@ -13,10 +14,14 @@ type LoadRequest = Extract<WorkerRequest, { type: 'load' }>;
 type AbortRequest = Extract<WorkerRequest, { type: 'abort' }>;
 
 const requests = new Map<string, AbortController>();
+let layers: ParseLayer[] = [];
 
 self.onmessage = (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
   switch (request.type) {
+    case 'setLayers':
+      layers = request.layers;
+      break;
     case 'load':
       loadTile(request);
       break;
@@ -33,7 +38,7 @@ async function loadTile(request: LoadRequest) {
 
   try {
     const data = await fetchTile(url, controller.signal);
-    const commands = data === null ? [] : parseTile(data, z, x, y);
+    const commands = data === null ? [] : parseTile(data, z, x, y, layers);
     const response: WorkerResponse = {
       type: 'loaded',
       key,

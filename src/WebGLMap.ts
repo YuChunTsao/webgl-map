@@ -2,7 +2,13 @@ import { Camera } from './Camera';
 import type { GeoJSON } from 'geojson';
 import { compileShader, createProgram } from './gl-utils';
 import { fragmentShaderSource, vertexShaderSource } from './shaders';
-import type { Color, LngLat, TileDrawCommand, TileGPUCommand } from './types';
+import type {
+  Color,
+  LngLat,
+  Style,
+  TileDrawCommand,
+  TileGPUCommand,
+} from './types';
 import { geoJSONToDrawCommands } from './geometry-draw';
 import { lngLatToMercator, mercatorToTile } from './mercator';
 import { TileWorker } from './TileWorker';
@@ -12,6 +18,7 @@ export interface WebGLMapOptions {
   center?: LngLat;
   zoom?: number;
   sourceMaxZoom?: number;
+  style: Style;
 }
 
 export class WebGLMap {
@@ -32,16 +39,23 @@ export class WebGLMap {
   private renderRequested: boolean = false;
   private tileWorker: TileWorker = new TileWorker();
   private sourceMaxZoom: number;
+  private style: Style;
 
   constructor(options: WebGLMapOptions) {
     this.containerId = options.containerId;
     this.sourceMaxZoom = Math.floor(options.sourceMaxZoom ?? 14);
+    this.style = options.style;
 
     this.initCanvas();
     this.initGL();
     this.initProgram();
     this.initCamera(options.center, options.zoom);
     this.bindEvents();
+    this.tileWorker.setLayers(
+      this.style.layers.map(({ id, sourceLayer }) => {
+        return { id, sourceLayer };
+      }),
+    );
 
     this.vectorTileUrl =
       'https://tiles.openstreetmap.us/vector/openmaptiles/{z}/{x}/{y}.mvt';
@@ -75,13 +89,18 @@ export class WebGLMap {
       this.camera.getMatrix(),
     );
 
-    for (const key of this.visibleTileKeys) {
-      const cacheTile = this.cachedTiles.get(key);
-      if (cacheTile === undefined) continue;
-      for (const cmd of cacheTile) {
-        this.gl.bindVertexArray(cmd.vao);
-        this.gl.uniform4f(this.colorUniformLocation, ...cmd.color);
-        this.gl.drawArrays(cmd.mode, 0, cmd.vertexCount);
+    for (const layer of this.style.layers) {
+      this.gl.uniform4f(this.colorUniformLocation, ...layer.color);
+
+      for (const key of this.visibleTileKeys) {
+        const tile = this.cachedTiles.get(key);
+        if (tile === undefined) continue;
+
+        for (const cmd of tile) {
+          if (cmd.layerId !== layer.id) continue;
+          this.gl.bindVertexArray(cmd.vao);
+          this.gl.drawArrays(cmd.mode, 0, cmd.vertexCount);
+        }
       }
     }
   }
@@ -178,7 +197,7 @@ export class WebGLMap {
   }
 
   private uploadTile(commands: TileDrawCommand[]): TileGPUCommand[] {
-    const gpuCommands = commands.map(({ positions, mode, color }) => {
+    const gpuCommands = commands.map(({ layerId, positions, mode }) => {
       const buffer = this.gl.createBuffer();
       this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
       this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
@@ -195,7 +214,7 @@ export class WebGLMap {
         0,
       );
 
-      return { vao, buffer, mode, color, vertexCount: positions.length / 2 };
+      return { layerId, vao, buffer, mode, vertexCount: positions.length / 2 };
     });
 
     // Unbind so later GL calls can't accidentally modify the last VAO.

@@ -11,7 +11,7 @@ export interface DrawCommand {
 }
 
 export interface TileDrawCommand extends DrawCommand {
-  color: Color;
+  layerId: string;
 }
 
 export interface TileGPUCommand {
@@ -19,5 +19,17 @@ export interface TileGPUCommand {
   buffer: WebGLBuffer;
   mode: GLenum;
   vertexCount: number;
+  layerId: string;
+}
+
+export interface StyleLayer {
+  id: string;
+  sourceLayer: string;
   color: Color;
+}
+
+export type ParseLayer = Pick<StyleLayer, 'id' | 'sourceLayer'>;
+
+export interface Style {
+  layers: StyleLayer[];
 }
