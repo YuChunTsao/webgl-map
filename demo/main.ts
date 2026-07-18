@@ -8,19 +8,38 @@ new WebGLMap({
   center: center,
   zoom: 14,
   style: {
+    sources: {
+      'openmaptiles-1': {
+        type: 'vector',
+        tiles: [
+          'https://tiles.openstreetmap.us/vector/openmaptiles/{z}/{x}/{y}.mvt',
+        ],
+        maxzoom: 14,
+      },
+      'openmaptiles-2': {
+        type: 'vector',
+        tiles: [
+          'https://tiles.openstreetmap.us/vector/openmaptiles/{z}/{x}/{y}.mvt',
+        ],
+        maxzoom: 14,
+      },
+    },
     layers: [
       {
         id: 'building',
+        source: 'openmaptiles-1',
         sourceLayer: 'building',
         color: [0.6, 0.6, 0.6, 1.0],
       },
       {
         id: 'transportation',
+        source: 'openmaptiles-1',
         sourceLayer: 'transportation',
-        color: [1.0, 1.0, 1.0, 1.0],
+        color: [0.5, 0.5, 0.5, 1.0],
       },
       {
         id: 'place',
+        source: 'openmaptiles-2',
         sourceLayer: 'place',
         color: [0.3, 0.3, 0.3, 1.0],
       },

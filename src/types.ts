@@ -24,12 +24,22 @@ export interface TileGPUCommand {
 
 export interface StyleLayer {
   id: string;
+  source: string;
   sourceLayer: string;
   color: Color;
 }
 
-export type ParseLayer = Pick<StyleLayer, 'id' | 'sourceLayer'>;
+export type ParseLayer = Pick<StyleLayer, 'id' | 'source' | 'sourceLayer'>;
+
+export type VectorTileSource = {
+  type: 'vector';
+  tiles: string[];
+  maxzoom?: number;
+};
+
+export type Source = VectorTileSource;
 
 export interface Style {
+  sources: Record<string, Source>;
   layers: StyleLayer[];
 }

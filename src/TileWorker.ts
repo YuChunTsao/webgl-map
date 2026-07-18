@@ -38,13 +38,21 @@ export class TileWorker {
     this.worker.postMessage(request);
   }
 
-  loadTile(key: string, url: string, z: number, x: number, y: number) {
+  loadTile(
+    key: string,
+    url: string,
+    source: string,
+    z: number,
+    x: number,
+    y: number,
+  ) {
     return new Promise<TileDrawCommand[]>((resolve, reject) => {
       this.pending.set(key, { resolve, reject });
       const request: WorkerRequest = {
         type: 'load',
         key,
         url,
+        source,
         z,
         x,
         y,

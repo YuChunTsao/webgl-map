@@ -8,6 +8,7 @@ import type {
   Style,
   TileDrawCommand,
   TileGPUCommand,
+  VectorTileSource,
 } from './types';
 import { geoJSONToDrawCommands } from './geometry-draw';
 import { lngLatToMercator, mercatorToTile } from './mercator';
@@ -17,7 +18,6 @@ export interface WebGLMapOptions {
   containerId: string;
   center?: LngLat;
   zoom?: number;
-  sourceMaxZoom?: number;
   style: Style;
 }
 
@@ -35,15 +35,12 @@ export class WebGLMap {
   private camera!: Camera;
   private cachedTiles: Map<string, TileGPUCommand[]> = new Map();
   private visibleTileKeys: Set<string> = new Set();
-  private vectorTileUrl: string;
   private renderRequested: boolean = false;
   private tileWorker: TileWorker = new TileWorker();
-  private sourceMaxZoom: number;
   private style: Style;
 
   constructor(options: WebGLMapOptions) {
     this.containerId = options.containerId;
-    this.sourceMaxZoom = Math.floor(options.sourceMaxZoom ?? 14);
     this.style = options.style;
 
     this.initCanvas();
@@ -51,21 +48,32 @@ export class WebGLMap {
     this.initProgram();
     this.initCamera(options.center, options.zoom);
     this.bindEvents();
+    this.verifyStyle();
+
     this.tileWorker.setLayers(
-      this.style.layers.map(({ id, sourceLayer }) => {
-        return { id, sourceLayer };
+      this.style.layers.map(({ id, source, sourceLayer }) => {
+        return { id, source, sourceLayer };
       }),
     );
 
-    this.vectorTileUrl =
-      'https://tiles.openstreetmap.us/vector/openmaptiles/{z}/{x}/{y}.mvt';
     this.updateVisibleTiles();
 
     this.requestRender();
   }
 
-  private tileCacheKey(z: number, x: number, y: number) {
-    return `${z}/${x}/${y}`;
+  private tileCacheKey(source: string, z: number, x: number, y: number) {
+    return `${source}/${z}/${x}/${y}`;
+  }
+
+  private verifyStyle() {
+    const sourceNames = new Set(Object.keys(this.style.sources));
+    for (const layer of this.style.layers) {
+      if (!sourceNames.has(layer.source)) {
+        throw new Error(
+          `layer "${layer.id}" references unknown source "${layer.source}"`,
+        );
+      }
+    }
   }
 
   // Avoid rendering more than once per frame
@@ -175,18 +183,32 @@ export class WebGLMap {
     this.render();
   }
 
-  async loadTile(url: string, z: number, x: number, y: number) {
+  async loadTile(
+    sourceId: string,
+    source: VectorTileSource,
+    z: number,
+    x: number,
+    y: number,
+  ) {
     // If the tile has already been fetched, we don't fetch it again.
-    const key = this.tileCacheKey(z, x, y);
+    const key = this.tileCacheKey(sourceId, z, x, y);
     if (this.tileWorker.isLoading(key) || this.cachedTiles.has(key)) return;
 
+    const url = source.tiles[(x + y) % source.tiles.length];
     const tileUrl = url
       .replace('{z}', String(z))
       .replace('{x}', String(x))
       .replace('{y}', String(y));
 
     try {
-      const result = await this.tileWorker.loadTile(key, tileUrl, z, x, y);
+      const result = await this.tileWorker.loadTile(
+        key,
+        tileUrl,
+        sourceId,
+        z,
+        x,
+        y,
+      );
       this.cachedTiles.set(key, this.uploadTile(result));
       this.evictTiles();
       this.requestRender();
@@ -231,29 +253,37 @@ export class WebGLMap {
 
   updateVisibleTiles() {
     const { minX, minY, maxX, maxY } = this.camera.getBounds();
-    const sourceZoom = Math.min(
-      Math.floor(this.camera.zoom),
-      this.sourceMaxZoom,
-    );
-
-    const { x: minTileX, y: minTileY } = mercatorToTile(minX, minY, sourceZoom);
-    const { x: maxTileX, y: maxTileY } = mercatorToTile(maxX, maxY, sourceZoom);
-
-    const tiles = [];
-
-    for (let x = minTileX; x <= maxTileX; x++) {
-      for (let y = minTileY; y <= maxTileY; y++) {
-        tiles.push({ z: sourceZoom, x, y });
-      }
-    }
-
     const visibleTileKeys: Set<string> = new Set();
-    for (const { z, x, y } of tiles) {
-      this.loadTile(this.vectorTileUrl, z, x, y);
 
-      const key = this.tileCacheKey(z, x, y);
-      visibleTileKeys.add(key);
-      this.touchTile(key);
+    // Get all used sources from layers defined by users.
+    const usedSource = new Set(this.style.layers.map((layer) => layer.source));
+
+    for (const sourceId of usedSource) {
+      const source = this.style.sources[sourceId];
+      const sourceZoom = Math.min(
+        Math.floor(this.camera.zoom),
+        Math.floor(source.maxzoom ?? 14),
+      );
+
+      const { x: minTileX, y: minTileY } = mercatorToTile(
+        minX,
+        minY,
+        sourceZoom,
+      );
+      const { x: maxTileX, y: maxTileY } = mercatorToTile(
+        maxX,
+        maxY,
+        sourceZoom,
+      );
+
+      for (let x = minTileX; x <= maxTileX; x++) {
+        for (let y = minTileY; y <= maxTileY; y++) {
+          this.loadTile(sourceId, source, sourceZoom, x, y);
+          const key = this.tileCacheKey(sourceId, sourceZoom, x, y);
+          visibleTileKeys.add(key);
+          this.touchTile(key);
+        }
+      }
     }
 
     // Abort in-flight requests for tiles that are no longer visible.

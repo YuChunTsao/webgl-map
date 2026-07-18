@@ -3,7 +3,15 @@ import type { ParseLayer, TileDrawCommand } from './types';
 
 export type WorkerRequest =
   | { type: 'setLayers'; layers: ParseLayer[] }
-  | { type: 'load'; key: string; url: string; z: number; x: number; y: number }
+  | {
+      type: 'load';
+      key: string;
+      url: string;
+      source: string;
+      z: number;
+      x: number;
+      y: number;
+    }
   | { type: 'abort'; key: string };
 
 export type WorkerResponse =
@@ -32,13 +40,15 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
 };
 
 async function loadTile(request: LoadRequest) {
-  const { key, url, z, x, y } = request;
+  const { key, url, source, z, x, y } = request;
   const controller = new AbortController();
   requests.set(key, controller);
 
   try {
     const data = await fetchTile(url, controller.signal);
-    const commands = data === null ? [] : parseTile(data, z, x, y, layers);
+    const sourceLayers = layers.filter((layer) => layer.source === source);
+    const commands =
+      data === null ? [] : parseTile(data, z, x, y, sourceLayers);
     const response: WorkerResponse = {
       type: 'loaded',
       key,
