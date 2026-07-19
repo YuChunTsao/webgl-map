@@ -3,18 +3,21 @@ import type { GeoJSON } from 'geojson';
 import { compileShader, createProgram } from './gl-utils';
 import { fragmentShaderSource, vertexShaderSource } from './shaders';
 import type {
+  BackgroundLayer,
   CachedTile,
   Color,
   LngLat,
   Style,
+  StyleLayer,
   TileDrawCommand,
   TileGPUCommand,
+  TileStyleLayer,
   VectorTileSource,
 } from './types';
 import { geoJSONToDrawCommands } from './geometry-draw';
 import { lngLatToMercator, mercatorToTile } from './mercator';
 import { TileWorker } from './TileWorker';
-import { multiply, scale, translation } from './mat3';
+import { identity, multiply, scale, translation, type Mat3 } from './mat3';
 
 export interface WebGLMapOptions {
   containerId: string;
@@ -40,6 +43,7 @@ export class WebGLMap {
   private renderRequested: boolean = false;
   private tileWorker: TileWorker = new TileWorker();
   private style: Style;
+  private backgroundVAO!: WebGLVertexArrayObject;
 
   constructor(options: WebGLMapOptions) {
     this.containerId = options.containerId;
@@ -51,11 +55,14 @@ export class WebGLMap {
     this.initCamera(options.center, options.zoom);
     this.bindEvents();
     this.verifyStyle();
+    this.initBackground();
 
     this.tileWorker.setLayers(
-      this.style.layers.map(({ id, source, sourceLayer }) => {
-        return { id, source, sourceLayer };
-      }),
+      this.style.layers
+        .filter(this.isTileLayer)
+        .map(({ id, source, sourceLayer }) => {
+          return { id, source, sourceLayer };
+        }),
     );
 
     this.updateVisibleTiles();
@@ -76,12 +83,17 @@ export class WebGLMap {
   private verifyStyle() {
     const sourceNames = new Set(Object.keys(this.style.sources));
     for (const layer of this.style.layers) {
+      if (!this.isTileLayer(layer)) continue;
       if (!sourceNames.has(layer.source)) {
         throw new Error(
           `layer "${layer.id}" references unknown source "${layer.source}"`,
         );
       }
     }
+  }
+
+  private isTileLayer(layer: StyleLayer): layer is TileStyleLayer {
+    return layer.type !== 'background';
   }
 
   // Avoid rendering more than once per frame
@@ -95,6 +107,68 @@ export class WebGLMap {
     });
   }
 
+  private initBackground() {
+    const topLeft = [-1, 1];
+    const topRight = [1, 1];
+    const bottomLeft = [-1, -1];
+    const bottomRight = [1, -1];
+
+    const positions = new Float32Array([
+      ...topLeft,
+      ...topRight,
+      ...bottomRight,
+      ...topLeft,
+      ...bottomLeft,
+      ...bottomRight,
+    ]);
+
+    const buffer = this.gl.createBuffer();
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
+    this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
+
+    this.backgroundVAO = this.gl.createVertexArray();
+    this.gl.bindVertexArray(this.backgroundVAO);
+    this.gl.enableVertexAttribArray(this.positionAttribLocation);
+    this.gl.vertexAttribPointer(
+      this.positionAttribLocation,
+      2,
+      this.gl.FLOAT,
+      false,
+      0,
+      0,
+    );
+    this.gl.bindVertexArray(null);
+  }
+
+  private drawBackground(layer: BackgroundLayer) {
+    this.gl.uniform4f(this.colorUniformLocation, ...layer.color);
+    this.gl.uniformMatrix3fv(this.matrixUniformLocation, false, identity());
+    this.gl.bindVertexArray(this.backgroundVAO);
+    this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
+  }
+
+  private drawTileLayer(layer: TileStyleLayer, cameraMatrix: Mat3) {
+    this.gl.uniform4f(this.colorUniformLocation, ...layer.color);
+
+    const keys = this.visibleTileKeys.get(layer.source);
+    if (keys === undefined) return;
+    for (const key of keys) {
+      const tile = this.cachedTiles.get(key);
+      if (tile === undefined) continue;
+
+      const tileMatrix = this.getTileMatrix(tile);
+      const matrix = multiply(cameraMatrix, tileMatrix);
+
+      this.gl.uniformMatrix3fv(this.matrixUniformLocation, false, matrix);
+
+      for (const cmd of tile.commands) {
+        if (cmd.layerId !== layer.id) continue;
+        this.gl.bindVertexArray(cmd.vao);
+        this.gl.drawArrays(cmd.mode, 0, cmd.vertexCount);
+      }
+    }
+  }
+
   render() {
     this.gl.useProgram(this.program);
     this.gl.clearColor(0.7, 0.7, 0.7, 1.0);
@@ -103,24 +177,17 @@ export class WebGLMap {
     const cameraMatrix = this.camera.getMatrix();
 
     for (const layer of this.style.layers) {
-      this.gl.uniform4f(this.colorUniformLocation, ...layer.color);
-
-      const keys = this.visibleTileKeys.get(layer.source);
-      if (keys === undefined) continue;
-      for (const key of keys) {
-        const tile = this.cachedTiles.get(key);
-        if (tile === undefined) continue;
-
-        const tileMatrix = this.getTileMatrix(tile);
-        const matrix = multiply(cameraMatrix, tileMatrix);
-
-        this.gl.uniformMatrix3fv(this.matrixUniformLocation, false, matrix);
-
-        for (const cmd of tile.commands) {
-          if (cmd.layerId !== layer.id) continue;
-          this.gl.bindVertexArray(cmd.vao);
-          this.gl.drawArrays(cmd.mode, 0, cmd.vertexCount);
-        }
+      switch (layer.type) {
+        case 'background':
+          this.drawBackground(layer);
+          break;
+        case 'circle':
+        case 'line':
+        case 'fill':
+          this.drawTileLayer(layer, cameraMatrix);
+          break;
+        default:
+          throw new Error(`unknown layer type`);
       }
     }
   }
@@ -267,7 +334,9 @@ export class WebGLMap {
     const { minX, minY, maxX, maxY } = this.camera.getBounds();
 
     // Get all used sources from layers defined by users.
-    const usedSource = new Set(this.style.layers.map((layer) => layer.source));
+    const usedSource = new Set(
+      this.style.layers.filter(this.isTileLayer).map((layer) => layer.source),
+    );
 
     for (const sourceId of usedSource) {
       const visibleTileKeys: Set<string> = new Set();

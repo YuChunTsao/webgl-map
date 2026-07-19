@@ -29,14 +29,42 @@ export interface CachedTile {
   commands: TileGPUCommand[];
 }
 
-export interface StyleLayer {
+interface LayerBase {
   id: string;
+}
+
+export interface BackgroundLayer extends LayerBase {
+  type: 'background';
+  color: Color;
+}
+
+export interface FillLayer extends LayerBase {
+  type: 'fill';
   source: string;
   sourceLayer: string;
   color: Color;
 }
 
-export type ParseLayer = Pick<StyleLayer, 'id' | 'source' | 'sourceLayer'>;
+export interface CircleLayer extends LayerBase {
+  type: 'circle';
+  source: string;
+  sourceLayer: string;
+  color: Color;
+  size?: number;
+}
+
+export interface LineLayer extends LayerBase {
+  type: 'line';
+  source: string;
+  sourceLayer: string;
+  color: Color;
+}
+
+export type StyleLayer = BackgroundLayer | FillLayer | CircleLayer | LineLayer;
+
+export type TileStyleLayer = Exclude<StyleLayer, BackgroundLayer>;
+
+export type ParseLayer = Pick<TileStyleLayer, 'id' | 'source' | 'sourceLayer'>;
 
 export type VectorTileSource = {
   type: 'vector';

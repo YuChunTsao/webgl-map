@@ -26,19 +26,27 @@ new WebGLMap({
     },
     layers: [
       {
+        id: 'background',
+        type: 'background',
+        color: [1.0, 1.0, 1.0, 1.0],
+      },
+      {
         id: 'building',
+        type: 'fill',
         source: 'openmaptiles-1',
         sourceLayer: 'building',
         color: [0.6, 0.6, 0.6, 1.0],
       },
       {
         id: 'transportation',
+        type: 'line',
         source: 'openmaptiles-1',
         sourceLayer: 'transportation',
         color: [0.5, 0.5, 0.5, 1.0],
       },
       {
         id: 'place',
+        type: 'circle',
         source: 'openmaptiles-2',
         sourceLayer: 'place',
         color: [0.3, 0.3, 0.3, 1.0],
