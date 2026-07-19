@@ -3,8 +3,20 @@ import { lngLatToMercator } from './mercator';
 import type { DrawCommand, LngLat } from './types';
 import type { GeoJSON, Geometry, Position } from 'geojson';
 
-export function geoJSONToDrawCommands(geojson: GeoJSON): DrawCommand[] {
-  const commands = flattenToGeometries(geojson).flatMap(geometryToDrawCommand);
+export type ProjectFunction = (position: Position) => [number, number];
+
+function projectPosition(position: Position): [number, number] {
+  const { x, y } = lngLatToMercator(positionToLngLat(position));
+  return [x, y];
+}
+
+export function geoJSONToDrawCommands(
+  geojson: GeoJSON,
+  project: ProjectFunction = projectPosition,
+): DrawCommand[] {
+  const commands = flattenToGeometries(geojson).flatMap((geometry) =>
+    geometryToDrawCommand(geometry, project),
+  );
 
   // Merge commands that share a draw mode, so each mode can be drawn in a single draw call.
   return mergeDrawCommands(commands);
@@ -23,47 +35,50 @@ function flattenToGeometries(geojson: GeoJSON): Geometry[] {
   }
 }
 
-function geometryToDrawCommand(geometry: Geometry): DrawCommand[] {
+function geometryToDrawCommand(
+  geometry: Geometry,
+  project: ProjectFunction,
+): DrawCommand[] {
   switch (geometry.type) {
     case 'Point':
       return [
         {
-          positions: pointToVertices([geometry.coordinates]),
+          positions: pointToVertices([geometry.coordinates], project),
           mode: WebGL2RenderingContext.POINTS,
         },
       ];
     case 'MultiPoint':
       return [
         {
-          positions: pointToVertices(geometry.coordinates),
+          positions: pointToVertices(geometry.coordinates, project),
           mode: WebGL2RenderingContext.POINTS,
         },
       ];
     case 'LineString':
       return [
         {
-          positions: lineToVertices(geometry.coordinates),
+          positions: lineToVertices(geometry.coordinates, project),
           mode: WebGL2RenderingContext.LINES,
         },
       ];
     case 'MultiLineString':
       return geometry.coordinates.map((line) => {
         return {
-          positions: lineToVertices(line),
+          positions: lineToVertices(line, project),
           mode: WebGL2RenderingContext.LINES,
         };
       });
     case 'Polygon':
       return [
         {
-          positions: polygonToVertices(geometry.coordinates),
+          positions: polygonToVertices(geometry.coordinates, project),
           mode: WebGL2RenderingContext.TRIANGLES,
         },
       ];
     case 'MultiPolygon':
       return geometry.coordinates.map((polygon) => {
         return {
-          positions: polygonToVertices(polygon),
+          positions: polygonToVertices(polygon, project),
           mode: WebGL2RenderingContext.TRIANGLES,
         };
       });
@@ -78,36 +93,42 @@ function positionToLngLat(position: Position): LngLat {
   return { lng: position[0], lat: position[1] };
 }
 
-function pointToVertices(coordinates: Position[]): Float32Array {
+function pointToVertices(
+  coordinates: Position[],
+  project: ProjectFunction,
+): Float32Array {
   const data: number[] = [];
   for (const coordinate of coordinates) {
-    const { x, y } = lngLatToMercator(positionToLngLat(coordinate));
+    const [x, y] = project(coordinate);
     data.push(x, y);
   }
 
   return new Float32Array(data);
 }
 
-function lineToVertices(coordinates: Position[]): Float32Array {
+function lineToVertices(
+  coordinates: Position[],
+  project: ProjectFunction,
+): Float32Array {
   const data: number[] = [];
   for (let i = 0; i < coordinates.length - 1; i++) {
     const fromCoord = coordinates[i];
     const toCoord = coordinates[i + 1];
-    const { x: fromX, y: fromY } = lngLatToMercator(
-      positionToLngLat(fromCoord),
-    );
-    const { x: toX, y: toY } = lngLatToMercator(positionToLngLat(toCoord));
+    const [fromX, fromY] = project(fromCoord);
+    const [toX, toY] = project(toCoord);
     data.push(fromX, fromY, toX, toY);
   }
 
   return new Float32Array(data);
 }
 
-function polygonToVertices(rings: Position[][]): Float32Array {
+function polygonToVertices(
+  rings: Position[][],
+  project: ProjectFunction,
+): Float32Array {
   const projectedRings: Position[][] = rings.map((ring) => {
     return ring.map((position) => {
-      const { x, y } = lngLatToMercator(positionToLngLat(position));
-      return [x, y];
+      return project(position);
     });
   });
 

@@ -2,7 +2,8 @@ import { VectorTile } from '@mapbox/vector-tile';
 import type { ParseLayer, TileDrawCommand } from './types';
 import { PbfReader } from 'pbf';
 import type { GeoJSON, Feature } from 'geojson';
-import { geoJSONToDrawCommands } from './geometry-draw';
+import { geoJSONToDrawCommands, type ProjectFunction } from './geometry-draw';
+import { lngLatToMercator } from './mercator';
 
 export async function fetchTile(
   url: string,
@@ -26,6 +27,13 @@ export function parseTile(
   const tile = new VectorTile(new PbfReader(data));
   const commands: TileDrawCommand[] = [];
 
+  // Calculate the tile local from mercator coordinate
+  const n = Math.pow(2, z);
+  const project: ProjectFunction = (position) => {
+    const mercator = lngLatToMercator({ lng: position[0], lat: position[1] });
+    return [mercator.x * n - x, mercator.y * n - y];
+  };
+
   // Only parse the source-layers referenced by the style's layers
   for (const { id, sourceLayer } of layers) {
     const layer = tile.layers[sourceLayer];
@@ -41,7 +49,7 @@ export function parseTile(
       features,
     };
 
-    for (const cmd of geoJSONToDrawCommands(featureCollection)) {
+    for (const cmd of geoJSONToDrawCommands(featureCollection, project)) {
       commands.push({ ...cmd, layerId: id });
     }
   }

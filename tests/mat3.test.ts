@@ -17,8 +17,9 @@ describe('identity', () => {
     expectMat3ToEqual(identity(), [1, 0, 0, 0, 1, 0, 0, 0, 1]);
   });
 
-  it('returns a length-9 Float32Array', () => {
+  it('returns a length-9 Float64Array', () => {
     expect(identity().length).toBe(9);
+    expect(identity()).toBeInstanceOf(Float64Array);
   });
 
   it('returns a fresh array reference on each call', () => {
@@ -90,12 +91,9 @@ describe('multiply', () => {
   });
 
   it('computes the correct product for a fully general matrix pair', () => {
-    const a = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-    const b = new Float32Array([9, 8, 7, 6, 5, 4, 3, 2, 1]);
-    expectMat3ToEqual(
-      multiply(a, b),
-      [90, 114, 138, 54, 69, 84, 18, 24, 30],
-    );
+    const a = new Float64Array([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const b = new Float64Array([9, 8, 7, 6, 5, 4, 3, 2, 1]);
+    expectMat3ToEqual(multiply(a, b), [90, 114, 138, 54, 69, 84, 18, 24, 30]);
   });
 
   it('is not commutative: order changes whether translation gets scaled', () => {

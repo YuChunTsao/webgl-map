@@ -22,6 +22,13 @@ export interface TileGPUCommand {
   layerId: string;
 }
 
+export interface CachedTile {
+  z: number;
+  x: number;
+  y: number;
+  commands: TileGPUCommand[];
+}
+
 export interface StyleLayer {
   id: string;
   source: string;

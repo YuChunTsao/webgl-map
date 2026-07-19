@@ -3,6 +3,7 @@ import type { GeoJSON } from 'geojson';
 import { compileShader, createProgram } from './gl-utils';
 import { fragmentShaderSource, vertexShaderSource } from './shaders';
 import type {
+  CachedTile,
   Color,
   LngLat,
   Style,
@@ -13,6 +14,7 @@ import type {
 import { geoJSONToDrawCommands } from './geometry-draw';
 import { lngLatToMercator, mercatorToTile } from './mercator';
 import { TileWorker } from './TileWorker';
+import { multiply, scale, translation } from './mat3';
 
 export interface WebGLMapOptions {
   containerId: string;
@@ -33,7 +35,7 @@ export class WebGLMap {
   private colorUniformLocation!: WebGLUniformLocation;
   private isDragging: boolean = false;
   private camera!: Camera;
-  private cachedTiles: Map<string, TileGPUCommand[]> = new Map();
+  private cachedTiles: Map<string, CachedTile> = new Map();
   private visibleTileKeys: Map<string, Set<string>> = new Map(); // sourceId -> tile keys
   private renderRequested: boolean = false;
   private tileWorker: TileWorker = new TileWorker();
@@ -65,6 +67,12 @@ export class WebGLMap {
     return `${source}/${z}/${x}/${y}`;
   }
 
+  private getTileMatrix(tile: CachedTile) {
+    const { z, x, y } = tile;
+    const n = Math.pow(2, z);
+    return multiply(translation(x / n, y / n), scale(1 / n, 1 / n));
+  }
+
   private verifyStyle() {
     const sourceNames = new Set(Object.keys(this.style.sources));
     for (const layer of this.style.layers) {
@@ -91,11 +99,8 @@ export class WebGLMap {
     this.gl.useProgram(this.program);
     this.gl.clearColor(0.7, 0.7, 0.7, 1.0);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT);
-    this.gl.uniformMatrix3fv(
-      this.matrixUniformLocation,
-      false,
-      this.camera.getMatrix(),
-    );
+
+    const cameraMatrix = this.camera.getMatrix();
 
     for (const layer of this.style.layers) {
       this.gl.uniform4f(this.colorUniformLocation, ...layer.color);
@@ -106,7 +111,12 @@ export class WebGLMap {
         const tile = this.cachedTiles.get(key);
         if (tile === undefined) continue;
 
-        for (const cmd of tile) {
+        const tileMatrix = this.getTileMatrix(tile);
+        const matrix = multiply(cameraMatrix, tileMatrix);
+
+        this.gl.uniformMatrix3fv(this.matrixUniformLocation, false, matrix);
+
+        for (const cmd of tile.commands) {
           if (cmd.layerId !== layer.id) continue;
           this.gl.bindVertexArray(cmd.vao);
           this.gl.drawArrays(cmd.mode, 0, cmd.vertexCount);
@@ -211,7 +221,7 @@ export class WebGLMap {
         x,
         y,
       );
-      this.cachedTiles.set(key, this.uploadTile(result));
+      this.cachedTiles.set(key, { z, x, y, commands: this.uploadTile(result) });
       this.evictTiles();
       this.requestRender();
     } catch (error) {
@@ -318,7 +328,7 @@ export class WebGLMap {
       if (this.isTileVisible(key)) continue;
 
       // GPU memory must be freed explicitly.
-      this.destroyTile(this.cachedTiles.get(key)!);
+      this.destroyTile(this.cachedTiles.get(key)!.commands);
       this.cachedTiles.delete(key);
     }
   }
@@ -347,6 +357,11 @@ export class WebGLMap {
     );
 
     this.gl.uniform4f(this.colorUniformLocation, ...color);
+    this.gl.uniformMatrix3fv(
+      this.matrixUniformLocation,
+      false,
+      this.camera.getMatrix(),
+    );
 
     const vertexCount = positions.length / 2;
     this.gl.drawArrays(mode, 0, vertexCount);

@@ -6,16 +6,16 @@
 // column-major: [a, d, g, b, e, h, c, f, i]
 // We have to use column-major for webgl
 
-export type Mat3 = Float32Array;
+export type Mat3 = Float64Array;
 
 export function identity(): Mat3 {
-  return new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+  return new Float64Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
 }
 export function translation(tx: number, ty: number): Mat3 {
-  return new Float32Array([1, 0, 0, 0, 1, 0, tx, ty, 1]);
+  return new Float64Array([1, 0, 0, 0, 1, 0, tx, ty, 1]);
 }
 export function scale(sx: number, sy: number): Mat3 {
-  return new Float32Array([sx, 0, 0, 0, sy, 0, 0, 0, 1]);
+  return new Float64Array([sx, 0, 0, 0, sy, 0, 0, 0, 1]);
 }
 
 //     | a(0)  b(3)  c(6) |        | j(0)  k(3)  l(6) |
@@ -30,7 +30,7 @@ export function scale(sx: number, sy: number): Mat3 {
 // C = | A1B0 + A4B1 + A7B2  A1B3 + A4B4 + A7B5  A1B6 + A4B7 + A7B8 |
 //     | A2B0 + A5B1 + A8B2  A2B3 + A5B4 + A8B5  A2B6 + A5B7 + A8B8 |
 export function multiply(a: Mat3, b: Mat3): Mat3 {
-  return new Float32Array([
+  return new Float64Array([
     a[0] * b[0] + a[3] * b[1] + a[6] * b[2],
     a[1] * b[0] + a[4] * b[1] + a[7] * b[2],
     a[2] * b[0] + a[5] * b[1] + a[8] * b[2],
