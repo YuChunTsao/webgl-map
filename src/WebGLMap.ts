@@ -1,7 +1,13 @@
 import { Camera } from './Camera';
 import type { GeoJSON } from 'geojson';
 import { compileShader, createProgram } from './gl-utils';
-import { fragmentShaderSource, vertexShaderSource } from './shaders';
+import {
+  circleFragmentShaderSource,
+  circleVertexShaderSource,
+  fragmentShaderSource,
+  POSITION_ATTRIB_LOCATION,
+  vertexShaderSource,
+} from './shaders';
 import type {
   BackgroundLayer,
   CachedTile,
@@ -19,6 +25,16 @@ import { lngLatToMercator, mercatorToTile } from './mercator';
 import { TileWorker } from './TileWorker';
 import { identity, multiply, scale, translation, type Mat3 } from './mat3';
 
+interface ProgramInfo {
+  program: WebGLProgram;
+  matrixUniformLocation: WebGLUniformLocation;
+  colorUniformLocation: WebGLUniformLocation;
+}
+
+interface CircleProgramInfo extends ProgramInfo {
+  sizeUniformLocation: WebGLUniformLocation;
+}
+
 export interface WebGLMapOptions {
   containerId: string;
   center?: LngLat;
@@ -28,14 +44,13 @@ export interface WebGLMapOptions {
 
 export class WebGLMap {
   private static readonly MAX_CACHED_TILES = 256;
+  private static readonly DEFAULT_CIRCLE_SIZE = 5;
   private containerId: string;
   private container!: HTMLDivElement;
   private canvas!: HTMLCanvasElement;
-  private program!: WebGLProgram;
+  private basicProgram!: ProgramInfo;
+  private circleProgram!: CircleProgramInfo;
   private gl!: WebGL2RenderingContext;
-  private positionAttribLocation!: number;
-  private matrixUniformLocation!: WebGLUniformLocation;
-  private colorUniformLocation!: WebGLUniformLocation;
   private isDragging: boolean = false;
   private camera!: Camera;
   private cachedTiles: Map<string, CachedTile> = new Map();
@@ -51,7 +66,7 @@ export class WebGLMap {
 
     this.initCanvas();
     this.initGL();
-    this.initProgram();
+    this.initPrograms();
     this.initCamera(options.center, options.zoom);
     this.bindEvents();
     this.verifyStyle();
@@ -128,9 +143,9 @@ export class WebGLMap {
 
     this.backgroundVAO = this.gl.createVertexArray();
     this.gl.bindVertexArray(this.backgroundVAO);
-    this.gl.enableVertexAttribArray(this.positionAttribLocation);
+    this.gl.enableVertexAttribArray(POSITION_ATTRIB_LOCATION);
     this.gl.vertexAttribPointer(
-      this.positionAttribLocation,
+      POSITION_ATTRIB_LOCATION,
       2,
       this.gl.FLOAT,
       false,
@@ -141,14 +156,30 @@ export class WebGLMap {
   }
 
   private drawBackground(layer: BackgroundLayer) {
-    this.gl.uniform4f(this.colorUniformLocation, ...layer.color);
-    this.gl.uniformMatrix3fv(this.matrixUniformLocation, false, identity());
+    this.gl.useProgram(this.basicProgram.program);
+    this.gl.uniform4f(this.basicProgram.colorUniformLocation, ...layer.color);
+    this.gl.uniformMatrix3fv(
+      this.basicProgram.matrixUniformLocation,
+      false,
+      identity(),
+    );
     this.gl.bindVertexArray(this.backgroundVAO);
     this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
   }
 
   private drawTileLayer(layer: TileStyleLayer, cameraMatrix: Mat3) {
-    this.gl.uniform4f(this.colorUniformLocation, ...layer.color);
+    const programInfo =
+      layer.type === 'circle' ? this.circleProgram : this.basicProgram;
+    this.gl.useProgram(programInfo.program);
+
+    this.gl.uniform4f(programInfo.colorUniformLocation, ...layer.color);
+
+    if (layer.type === 'circle') {
+      this.gl.uniform1f(
+        this.circleProgram.sizeUniformLocation,
+        layer.size ?? WebGLMap.DEFAULT_CIRCLE_SIZE,
+      );
+    }
 
     const keys = this.visibleTileKeys.get(layer.source);
     if (keys === undefined) return;
@@ -159,7 +190,11 @@ export class WebGLMap {
       const tileMatrix = this.getTileMatrix(tile);
       const matrix = multiply(cameraMatrix, tileMatrix);
 
-      this.gl.uniformMatrix3fv(this.matrixUniformLocation, false, matrix);
+      this.gl.uniformMatrix3fv(
+        programInfo.matrixUniformLocation,
+        false,
+        matrix,
+      );
 
       for (const cmd of tile.commands) {
         if (cmd.layerId !== layer.id) continue;
@@ -170,7 +205,6 @@ export class WebGLMap {
   }
 
   render() {
-    this.gl.useProgram(this.program);
     this.gl.clearColor(0.7, 0.7, 0.7, 1.0);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT);
 
@@ -305,9 +339,9 @@ export class WebGLMap {
 
       const vao = this.gl.createVertexArray();
       this.gl.bindVertexArray(vao);
-      this.gl.enableVertexAttribArray(this.positionAttribLocation);
+      this.gl.enableVertexAttribArray(POSITION_ATTRIB_LOCATION);
       this.gl.vertexAttribPointer(
-        this.positionAttribLocation,
+        POSITION_ATTRIB_LOCATION,
         2,
         this.gl.FLOAT,
         false,
@@ -409,15 +443,17 @@ export class WebGLMap {
   }
 
   drawGeometry(positions: Float32Array, mode: GLenum, color: Color) {
+    this.gl.useProgram(this.basicProgram.program);
+
     const buffer = this.gl.createBuffer();
     this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
     this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
 
     const vao = this.gl.createVertexArray();
     this.gl.bindVertexArray(vao);
-    this.gl.enableVertexAttribArray(this.positionAttribLocation);
+    this.gl.enableVertexAttribArray(POSITION_ATTRIB_LOCATION);
     this.gl.vertexAttribPointer(
-      this.positionAttribLocation,
+      POSITION_ATTRIB_LOCATION,
       2,
       this.gl.FLOAT,
       false,
@@ -425,9 +461,9 @@ export class WebGLMap {
       0,
     );
 
-    this.gl.uniform4f(this.colorUniformLocation, ...color);
+    this.gl.uniform4f(this.basicProgram.colorUniformLocation, ...color);
     this.gl.uniformMatrix3fv(
-      this.matrixUniformLocation,
+      this.basicProgram.matrixUniformLocation,
       false,
       this.camera.getMatrix(),
     );
@@ -439,33 +475,22 @@ export class WebGLMap {
     this.gl.deleteVertexArray(vao);
   }
 
-  initProgram() {
+  createProgramInfo(vsSource: string, fsSource: string) {
     const vertexShader = compileShader(
       this.gl,
       this.gl.VERTEX_SHADER,
-      vertexShaderSource,
+      vsSource,
     );
     const fragmentShader = compileShader(
       this.gl,
       this.gl.FRAGMENT_SHADER,
-      fragmentShaderSource,
+      fsSource,
     );
 
-    this.program = createProgram(this.gl, vertexShader, fragmentShader);
-
-    const positionAttribLocation = this.gl.getAttribLocation(
-      this.program,
-      'a_position',
-    );
-    if (positionAttribLocation === -1)
-      throw new Error(
-        `WebGLMap: failed to find attribute location for "a_position"`,
-      );
-
-    this.positionAttribLocation = positionAttribLocation;
+    const program = createProgram(this.gl, vertexShader, fragmentShader);
 
     const matrixUniformLocation = this.gl.getUniformLocation(
-      this.program,
+      program,
       'u_matrix',
     );
     if (matrixUniformLocation === null) {
@@ -473,21 +498,57 @@ export class WebGLMap {
         `WebGLMap: failed to find uniform location for "u_matrix"`,
       );
     }
-    this.matrixUniformLocation = matrixUniformLocation;
 
-    const colorUniformLocation = this.gl.getUniformLocation(
-      this.program,
-      'u_color',
-    );
+    const colorUniformLocation = this.gl.getUniformLocation(program, 'u_color');
     if (colorUniformLocation === null) {
       throw new Error(
         `WebGLMap: failed to find uniform location for "u_color"`,
       );
     }
-    this.colorUniformLocation = colorUniformLocation;
 
     this.gl.deleteShader(vertexShader);
     this.gl.deleteShader(fragmentShader);
+
+    const programInfo = {
+      program: program,
+      matrixUniformLocation: matrixUniformLocation,
+      colorUniformLocation: colorUniformLocation,
+    };
+
+    return programInfo;
+  }
+
+  initBasicProgram() {
+    const programInfo = this.createProgramInfo(
+      vertexShaderSource,
+      fragmentShaderSource,
+    );
+    this.basicProgram = programInfo;
+  }
+
+  initCircleProgram() {
+    const programInfo = this.createProgramInfo(
+      circleVertexShaderSource,
+      circleFragmentShaderSource,
+    );
+
+    const sizeUniformLocation = this.gl.getUniformLocation(
+      programInfo.program,
+      'u_size',
+    );
+    if (sizeUniformLocation === null) {
+      throw new Error(`WebGLMap: failed to find uniform location for "u_size"`);
+    }
+
+    this.circleProgram = {
+      ...programInfo,
+      sizeUniformLocation: sizeUniformLocation,
+    };
+  }
+
+  initPrograms() {
+    this.initBasicProgram();
+    this.initCircleProgram();
   }
 
   initGL() {
