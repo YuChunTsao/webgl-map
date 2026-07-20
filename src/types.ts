@@ -64,7 +64,10 @@ export type StyleLayer = BackgroundLayer | FillLayer | CircleLayer | LineLayer;
 
 export type TileStyleLayer = Exclude<StyleLayer, BackgroundLayer>;
 
-export type ParseLayer = Pick<TileStyleLayer, 'id' | 'source' | 'sourceLayer'>;
+export type ParseLayer = Pick<
+  TileStyleLayer,
+  'id' | 'source' | 'sourceLayer' | 'type'
+>;
 
 export type VectorTileSource = {
   type: 'vector';

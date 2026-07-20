@@ -75,8 +75,8 @@ export class WebGLMap {
     this.tileWorker.setLayers(
       this.style.layers
         .filter(this.isTileLayer)
-        .map(({ id, source, sourceLayer }) => {
-          return { id, source, sourceLayer };
+        .map(({ id, source, sourceLayer, type }) => {
+          return { id, source, sourceLayer, type };
         }),
     );
 

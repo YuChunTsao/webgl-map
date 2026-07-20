@@ -5,6 +5,9 @@ import type { GeoJSON, Feature } from 'geojson';
 import { geoJSONToDrawCommands, type ProjectFunction } from './geometry-draw';
 import { lngLatToMercator } from './mercator';
 
+// MVT geometry type enum: 1 = Point, 2 = LineString, 3 = Polygon.
+const LAYER_GEOMETRY_TYPE = { circle: 1, line: 2, fill: 3 } as const;
+
 export async function fetchTile(
   url: string,
   signal: AbortSignal,
@@ -35,15 +38,19 @@ export function parseTile(
   };
 
   // Only parse the source-layers referenced by the style's layers
-  for (const { id, sourceLayer } of layers) {
+  for (const { id, sourceLayer, type } of layers) {
     const layer = tile.layers[sourceLayer];
     if (layer === undefined) continue;
 
     // Collect the whole layer into one FeatureCollection
+    const geometryType = LAYER_GEOMETRY_TYPE[type];
     const features: Feature[] = [];
     for (let i = 0; i < layer.length; i++) {
-      features.push(layer.feature(i).toGeoJSON(x, y, z));
+      const feature = layer.feature(i);
+      if (feature.type !== geometryType) continue;
+      features.push(feature.toGeoJSON(x, y, z));
     }
+
     const featureCollection: GeoJSON = {
       type: 'FeatureCollection',
       features,
