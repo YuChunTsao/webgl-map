@@ -8,6 +8,7 @@ export type Color = [r: number, g: number, b: number, a: number];
 export interface DrawCommand {
   positions: Float32Array;
   mode: GLenum;
+  extrude?: Float32Array;
 }
 
 export interface TileDrawCommand extends DrawCommand {
@@ -16,7 +17,8 @@ export interface TileDrawCommand extends DrawCommand {
 
 export interface TileGPUCommand {
   vao: WebGLVertexArrayObject;
-  buffer: WebGLBuffer;
+  positionBuffer: WebGLBuffer;
+  extrudeBuffer?: WebGLBuffer;
   mode: GLenum;
   vertexCount: number;
   layerId: string;
@@ -58,6 +60,7 @@ export interface LineLayer extends LayerBase {
   source: string;
   sourceLayer: string;
   color: Color;
+  width?: number;
 }
 
 export type StyleLayer = BackgroundLayer | FillLayer | CircleLayer | LineLayer;

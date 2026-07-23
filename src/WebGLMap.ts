@@ -5,7 +5,10 @@ import {
   circleFragmentShaderSource,
   circleVertexShaderSource,
   fragmentShaderSource,
+  lineFragmentShaderSource,
+  lineVertexShaderSource,
   POSITION_ATTRIB_LOCATION,
+  EXTRUDE_ATTRIB_LOCATION,
   vertexShaderSource,
 } from './shaders';
 import type {
@@ -35,6 +38,11 @@ interface CircleProgramInfo extends ProgramInfo {
   sizeUniformLocation: WebGLUniformLocation;
 }
 
+interface LineProgramInfo extends ProgramInfo {
+  widthUniformLocation: WebGLUniformLocation;
+  resolutionUniformLocation: WebGLUniformLocation;
+}
+
 export interface WebGLMapOptions {
   containerId: string;
   center?: LngLat;
@@ -45,11 +53,13 @@ export interface WebGLMapOptions {
 export class WebGLMap {
   private static readonly MAX_CACHED_TILES = 256;
   private static readonly DEFAULT_CIRCLE_SIZE = 5;
+  private static readonly DEFAULT_LINE_WIDTH = 1;
   private containerId: string;
   private container!: HTMLDivElement;
   private canvas!: HTMLCanvasElement;
   private basicProgram!: ProgramInfo;
   private circleProgram!: CircleProgramInfo;
+  private lineProgram!: LineProgramInfo;
   private gl!: WebGL2RenderingContext;
   private isDragging: boolean = false;
   private camera!: Camera;
@@ -168,8 +178,19 @@ export class WebGLMap {
   }
 
   private drawTileLayer(layer: TileStyleLayer, cameraMatrix: Mat3) {
-    const programInfo =
-      layer.type === 'circle' ? this.circleProgram : this.basicProgram;
+    let programInfo: ProgramInfo;
+    switch (layer.type) {
+      case 'line':
+        programInfo = this.lineProgram;
+        break;
+      case 'circle':
+        programInfo = this.circleProgram;
+        break;
+      default:
+        programInfo = this.basicProgram;
+        break;
+    }
+
     this.gl.useProgram(programInfo.program);
 
     this.gl.uniform4f(programInfo.colorUniformLocation, ...layer.color);
@@ -178,6 +199,21 @@ export class WebGLMap {
       this.gl.uniform1f(
         this.circleProgram.sizeUniformLocation,
         layer.size ?? WebGLMap.DEFAULT_CIRCLE_SIZE,
+      );
+    }
+
+    if (layer.type === 'line') {
+      // width
+      this.gl.uniform1f(
+        this.lineProgram.widthUniformLocation,
+        layer.width ?? WebGLMap.DEFAULT_LINE_WIDTH,
+      );
+
+      // resolution
+      const resolution = [this.canvas.width, this.canvas.height];
+      this.gl.uniform2fv(
+        this.lineProgram.resolutionUniformLocation,
+        resolution,
       );
     }
 
@@ -332,25 +368,59 @@ export class WebGLMap {
   }
 
   private uploadTile(commands: TileDrawCommand[]): TileGPUCommand[] {
-    const gpuCommands = commands.map(({ layerId, positions, mode }) => {
-      const buffer = this.gl.createBuffer();
-      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
-      this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
+    const gpuCommands = commands.map(
+      ({ layerId, positions, mode, extrude }) => {
+        const positionBuffer = this.gl.createBuffer();
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, positionBuffer);
+        this.gl.bufferData(
+          this.gl.ARRAY_BUFFER,
+          positions,
+          this.gl.STATIC_DRAW,
+        );
 
-      const vao = this.gl.createVertexArray();
-      this.gl.bindVertexArray(vao);
-      this.gl.enableVertexAttribArray(POSITION_ATTRIB_LOCATION);
-      this.gl.vertexAttribPointer(
-        POSITION_ATTRIB_LOCATION,
-        2,
-        this.gl.FLOAT,
-        false,
-        0,
-        0,
-      );
+        const vao = this.gl.createVertexArray();
+        this.gl.bindVertexArray(vao);
+        this.gl.enableVertexAttribArray(POSITION_ATTRIB_LOCATION);
+        this.gl.vertexAttribPointer(
+          POSITION_ATTRIB_LOCATION,
+          2,
+          this.gl.FLOAT,
+          false,
+          0,
+          0,
+        );
 
-      return { layerId, vao, buffer, mode, vertexCount: positions.length / 2 };
-    });
+        let extrudeBuffer = undefined;
+        if (extrude !== undefined) {
+          extrudeBuffer = this.gl.createBuffer();
+          this.gl.bindBuffer(this.gl.ARRAY_BUFFER, extrudeBuffer);
+          this.gl.bufferData(
+            this.gl.ARRAY_BUFFER,
+            extrude,
+            this.gl.STATIC_DRAW,
+          );
+
+          this.gl.enableVertexAttribArray(EXTRUDE_ATTRIB_LOCATION);
+          this.gl.vertexAttribPointer(
+            EXTRUDE_ATTRIB_LOCATION,
+            2,
+            this.gl.FLOAT,
+            false,
+            0,
+            0,
+          );
+        }
+
+        return {
+          layerId,
+          vao,
+          positionBuffer,
+          extrudeBuffer,
+          mode,
+          vertexCount: positions.length / 2,
+        };
+      },
+    );
 
     // Unbind so later GL calls can't accidentally modify the last VAO.
     this.gl.bindVertexArray(null);
@@ -358,9 +428,11 @@ export class WebGLMap {
   }
 
   private destroyTile(commands: TileGPUCommand[]) {
-    for (const { vao, buffer } of commands) {
+    for (const { vao, positionBuffer, extrudeBuffer } of commands) {
       this.gl.deleteVertexArray(vao);
-      this.gl.deleteBuffer(buffer);
+      this.gl.deleteBuffer(positionBuffer);
+
+      if (extrudeBuffer !== undefined) this.gl.deleteBuffer(extrudeBuffer);
     }
   }
 
@@ -546,9 +618,44 @@ export class WebGLMap {
     };
   }
 
+  initLineProgram() {
+    const programInfo = this.createProgramInfo(
+      lineVertexShaderSource,
+      lineFragmentShaderSource,
+    );
+
+    const widthUniformLocation = this.gl.getUniformLocation(
+      programInfo.program,
+      'u_width',
+    );
+
+    if (widthUniformLocation === null) {
+      throw new Error(
+        `WebGLMap: failed to find uniform location for "u_width"`,
+      );
+    }
+
+    const resolutionUniformLocation = this.gl.getUniformLocation(
+      programInfo.program,
+      'u_resolution',
+    );
+    if (resolutionUniformLocation === null) {
+      throw new Error(
+        `WebGLMap: failed to fine uniform location for "u_resolution"`,
+      );
+    }
+
+    this.lineProgram = {
+      ...programInfo,
+      widthUniformLocation,
+      resolutionUniformLocation,
+    };
+  }
+
   initPrograms() {
     this.initBasicProgram();
     this.initCircleProgram();
+    this.initLineProgram();
   }
 
   initGL() {

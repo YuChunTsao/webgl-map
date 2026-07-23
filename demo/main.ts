@@ -78,6 +78,7 @@ new WebGLMap({
         source: 'openmaptiles',
         sourceLayer: 'transportation',
         color: [1.0, 0.996, 0.988, 1.0],
+        width: 5,
       },
       {
         id: 'aeroway',
